@@ -3,4 +3,3 @@ pandas
 numpy
 scikit-learn
 sqlalchemy
-tensorflow==2.15.0
