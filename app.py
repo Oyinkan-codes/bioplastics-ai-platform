@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 st.set_page_config(page_title="Bioplastics AI Platform", layout="wide")
@@ -29,6 +29,19 @@ class PropertyTest(Base):
     water_absorption_percent = Column(Float)
 
 engine = create_engine('sqlite:///bioplastics.db')
+
+# Ensure missing columns exist in SQLite without crashing
+def upgrade_db_schema():
+    with engine.connect() as conn:
+        for col in ['starch_percent', 'sorbitol_percent']:
+            try:
+                conn.execute(text(f"ALTER TABLE formulations ADD COLUMN {col} FLOAT DEFAULT 0.0;"))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists
+
+upgrade_db_schema()
+
 Session = sessionmaker(bind=engine)
 
 @st.cache_resource
@@ -62,7 +75,6 @@ def load_and_train():
     X_scaled = x_scaler.fit_transform(X)
     y_scaled = y_scaler.fit_transform(y)
     
-    # Lightweight Multi-Layer Perceptron (Neural Network)
     model = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
     model.fit(X_scaled, y_scaled)
     
