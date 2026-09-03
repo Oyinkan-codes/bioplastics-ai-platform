@@ -1,17 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
+from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Page Configuration
-st.set_page_config(page_title="Bioplastics AI Formulation Platform", layout="wide")
+st.set_page_config(page_title="Bioplastics AI Platform", layout="wide")
 
-# Database Models
 Base = declarative_base()
 
 class Formulation(Base):
@@ -45,9 +41,9 @@ def load_and_train():
     data = []
     for form, test in query.all():
         data.append({
-            'agar_percent': form.agar_percent,
+            'agar_percent': form.agar_percent or 0.0,
             'starch_percent': getattr(form, 'starch_percent', 0.0) or 0.0,
-            'glycerin_percent': form.glycerin_percent,
+            'glycerin_percent': form.glycerin_percent or 0.0,
             'sorbitol_percent': getattr(form, 'sorbitol_percent', 0.0) or 0.0,
             'tensile_strength': test.tensile_strength_mpa,
             'elastic_modulus': test.elastic_modulus_gpa,
@@ -57,9 +53,7 @@ def load_and_train():
     
     df = pd.DataFrame(data)
     
-    # Inputs: Target Mechanical Properties
     X = df[['tensile_strength', 'elastic_modulus', 'water_absorption']].values
-    # Outputs: 4 Chemical Additives Ratios
     y = df[['agar_percent', 'starch_percent', 'glycerin_percent', 'sorbitol_percent']].values
     
     x_scaler = MinMaxScaler()
@@ -68,22 +62,16 @@ def load_and_train():
     X_scaled = x_scaler.fit_transform(X)
     y_scaled = y_scaler.fit_transform(y)
     
-    model = Sequential([
-        Dense(64, activation='relu', input_shape=(3,)),
-        Dense(32, activation='relu'),
-        Dense(4, activation='linear')  # 4 Output formulation components
-    ])
-    
-    model.compile(optimizer='adam', loss='mse')
-    model.fit(X_scaled, y_scaled, epochs=120, verbose=0)
+    # Lightweight Multi-Layer Perceptron (Neural Network)
+    model = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
+    model.fit(X_scaled, y_scaled)
     
     return model, x_scaler, y_scaler
 
 model, x_scaler, y_scaler = load_and_train()
 
-# UI Layout
 st.title("🌱 Bioplastics AI Formulation Platform")
-st.write("Adjust target mechanical properties to generate multi-component formulation ratios.")
+st.write("Adjust target properties to generate optimal chemical formulation ratios.")
 
 col1, col2 = st.columns([1, 1])
 
@@ -96,14 +84,13 @@ with col1:
 with col2:
     st.subheader("AI Recommended Recipe")
     X_in = x_scaler.transform([[tensile, elastic, water_abs]])
-    pred_scaled = model.predict(X_in, verbose=0)
+    pred_scaled = model.predict(X_in)
     pred_actual = y_scaler.inverse_transform(pred_scaled)[0]
     
     agar_pct = max(0.0, float(pred_actual[0]))
     starch_pct = max(0.0, float(pred_actual[1]))
     gly_pct = max(0.0, float(pred_actual[2]))
     sorb_pct = max(0.0, float(pred_actual[3]))
-    
     solvent_pct = max(0.0, 100.0 - (agar_pct + starch_pct + gly_pct + sorb_pct))
     
     st.metric("Recommended Agar (%)", f"{agar_pct:.2f}%")
