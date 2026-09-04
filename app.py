@@ -179,7 +179,14 @@ cost_water = st.sidebar.number_input("Water/Solvent ($/kg)", value=0.05, step=0.
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Multi-Objective Trade-Off")
 
-mode = st.sidebar.radio("Optimization Mode", ["Manual Target Sliders", "Automated Pareto Optimizer"])
+mode = st.sidebar.radio("Optimization Mode", ["Manual Target Sliders", "Constrained Pareto Optimizer"])
+
+# Add Hard Constraint Controls
+if mode == "Constrained Pareto Optimizer":
+    st.sidebar.markdown("### 🛑 Hard Constraints")
+    max_budget = st.sidebar.number_input("Max Budget ($/kg)", value=6.00, step=0.50, min_value=0.50)
+    max_agar_limit = st.sidebar.slider("Max Allowed Agar (%)", 5.0, 50.0, 25.0, 1.0)
+    max_starch_limit = st.sidebar.slider("Max Allowed Starch (%)", 5.0, 50.0, 30.0, 1.0)
 
 col1, col2 = st.columns([1, 1])
 
@@ -203,8 +210,8 @@ with col1:
             help="0.0 = Absolute Lowest Cost | 1.0 = Absolute Highest Tensile Strength"
         )
         
-        # Pareto Search evaluation loop
-        search_tensile_range = np.linspace(10.0, 50.0, 100)
+        # Pareto Search evaluation loop across 150 points for granular evaluation
+        search_tensile_range = np.linspace(10.0, 50.0, 150)
         candidate_evals = []
 
         for t_val in search_tensile_range:
@@ -225,28 +232,44 @@ with col1:
                 (sob_p / 100.0) * cost_sorbitol +
                 (sol_p / 100.0) * cost_water
             )
-            candidate_evals.append({"tensile": t_val, "cost": cost_eval})
+            candidate_evals.append({
+                "tensile": t_val, 
+                "cost": cost_eval,
+                "agar": a_p,
+                "starch": s_p
+            })
 
         df_candidates = pd.DataFrame(candidate_evals)
 
-        # MinMax Normalization for multi-objective scoring
-        c_min, c_max = df_candidates["cost"].min(), df_candidates["cost"].max()
-        t_min, t_max = df_candidates["tensile"].min(), df_candidates["tensile"].max()
-
-        # Score formulation candidates
-        df_candidates["norm_cost"] = (df_candidates["cost"] - c_min) / (c_max - c_min + 1e-6)
-        df_candidates["norm_tensile"] = (df_candidates["tensile"] - t_min) / (t_max - t_min + 1e-6)
-        
-        # Weighted score: Minimize normalized cost, maximize normalized tensile strength
-        df_candidates["score"] = (
-            (1.0 - trade_off_weight) * (1.0 - df_candidates["norm_cost"]) + 
-            trade_off_weight * df_candidates["norm_tensile"]
+        # APPLY HARD CONSTRAINTS FILTERING
+        valid_mask = (
+            (df_candidates["cost"] <= max_budget) &
+            (df_candidates["agar"] <= max_agar_limit) &
+            (df_candidates["starch"] <= max_starch_limit)
         )
-
-        best_row = df_candidates.loc[df_candidates["score"].idxmax()]
-        tensile = round(float(best_row["tensile"]), 2)
         
-        st.info(f"💡 **Optimal Recommended Tensile Target:** `{tensile} MPa`")
+        df_valid = df_candidates[valid_mask].copy()
+
+        if df_valid.empty:
+            st.error(f"⚠️ No valid formulation found satisfying budget <= ${max_budget:.2f}/kg, Agar <= {max_agar_limit}%, and Starch <= {max_starch_limit}%. Defaulting to fallback target.")
+            tensile = 10.0
+        else:
+            # MinMax Normalization on valid candidates only
+            c_min, c_max = df_valid["cost"].min(), df_valid["cost"].max()
+            t_min, t_max = df_valid["tensile"].min(), df_valid["tensile"].max()
+
+            df_valid["norm_cost"] = (df_valid["cost"] - c_min) / (c_max - c_min + 1e-6)
+            df_valid["norm_tensile"] = (df_valid["tensile"] - t_min) / (t_max - t_min + 1e-6)
+            
+            df_valid["score"] = (
+                (1.0 - trade_off_weight) * (1.0 - df_valid["norm_cost"]) + 
+                trade_off_weight * df_valid["norm_tensile"]
+            )
+
+            best_row = df_valid.loc[df_valid["score"].idxmax()]
+            tensile = round(float(best_row["tensile"]), 2)
+            
+            st.success(f"✅ **Constrained Optimal Target:** `{tensile} MPa` (Valid candidates: {len(df_valid)}/150)")
 
 with col2:
     st.subheader("AI Recommended Recipe & Economics")
@@ -360,7 +383,7 @@ with tab1:
         line_width=2, 
         line_dash="dash", 
         line_color="red",
-        annotation_text=f" Optimal Selection ({tensile} MPa)",
+        annotation_text=f" Constrained Selection ({tensile} MPa)",
         annotation_position="top left"
     )
     
@@ -382,12 +405,23 @@ with tab2:
         markers=True
     )
     
+    # Highlight budget threshold if constrained optimizer is active
+    if mode == "Constrained Pareto Optimizer":
+        fig_cost.add_hline(
+            y=max_budget,
+            line_width=2,
+            line_dash="dot",
+            line_color="red",
+            annotation_text=f" Max Budget Limit (${max_budget:.2f}/kg)",
+            annotation_position="bottom right"
+        )
+    
     fig_cost.add_scatter(
         x=[tensile],
         y=[est_cost_per_kg],
         mode="markers",
         marker=dict(size=14, color="red"),
-        name="Optimal Target"
+        name="Constrained Target"
     )
     
     fig_cost.update_layout(template="plotly_white")
