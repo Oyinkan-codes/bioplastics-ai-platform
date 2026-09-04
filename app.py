@@ -5,7 +5,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.neural_network import MLPRegressor
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 from fpdf import FPDF
@@ -18,13 +18,11 @@ st.set_page_config(
 )
 
 # --- USER AUTHENTICATION SETUP ---
-# Predefined valid platform users
 USER_CREDENTIALS = {
     "odeborah": {"password": "SecurePass2026", "name": "Oyinkan Deborah"},
     "jsmith": {"password": "Password123", "name": "John Smith"}
 }
 
-# Session state initialization for login status
 if "authentication_status" not in st.session_state:
     st.session_state["authentication_status"] = None
 if "name" not in st.session_state:
@@ -32,7 +30,6 @@ if "name" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state["username"] = None
 
-# Render login form if user is not authenticated
 if not st.session_state["authentication_status"]:
     st.title("🔑 Bioplastic AI Platform Login")
     with st.form("login_form"):
@@ -91,7 +88,16 @@ class ExportLog(Base):
     water_percent = Column(Float)
     est_cost_per_kg = Column(Float, default=0.0)
 
+# Create table structure if missing
 Base.metadata.create_all(engine)
+
+# Auto-patch database to ensure user_id column exists
+try:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE export_logs ADD COLUMN IF NOT EXISTS user_id VARCHAR;"))
+except Exception as e:
+    pass
+
 Session = sessionmaker(bind=engine)
 
 def log_recipe_export(user_id, project_name, tensile, elastic, water_abs, recipe, cost_per_kg):
