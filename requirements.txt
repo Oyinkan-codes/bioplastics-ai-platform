@@ -4,3 +4,4 @@ numpy
 scikit-learn
 sqlalchemy
 fpdf2
+plotly
