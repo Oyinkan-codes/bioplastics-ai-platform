@@ -5,3 +5,6 @@ pandas
 plotly
 reportlab
 scipy
+joblib
+supabase
+st-supabase-connection
