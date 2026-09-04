@@ -6,3 +6,4 @@ plotly
 sqlalchemy
 fpdf
 psycopg2-binary
+streamlit-authenticator
