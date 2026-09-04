@@ -369,7 +369,6 @@ with col2:
     
     total_batch_cost = est_cost_per_kg * batch_kg
 
-    # ENVIRONMENTAL COMPUTATIONS
     est_co2_per_kg = (
         (agar_pct / 100.0) * co2_agar +
         (starch_pct / 100.0) * co2_starch +
@@ -379,11 +378,9 @@ with col2:
     )
     total_co2_batch = est_co2_per_kg * batch_kg
     
-    # Soil Biodegradation Model Estimate (Days to 90% Mass Loss)
     plasticizer_total = gly_pct + sorb_pct
     est_bio_days = max(14.0, 120.0 - (plasticizer_total * 1.5) - (starch_pct * 0.8))
 
-    # MANUFACTURING RISK ALERTS (OPTION 3)
     st.markdown("### 🚨 Manufacturing Risk Evaluation")
     risk_found = False
     
@@ -441,10 +438,11 @@ with col2:
 
 # --- MULTI-VARIABLE SENSITIVITY ANALYSIS & TABS ---
 st.markdown("---")
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Composition Shift", 
     "📈 Tensile vs. Cost & CO₂", 
-    "🎯 Pareto Frontier"
+    "🎯 Pareto Frontier",
+    "🌐 3D Trade-Off Space"
 ])
 
 tensile_range = np.linspace(10.0, 50.0, 50)
@@ -559,6 +557,68 @@ with tab3:
         st.plotly_chart(fig_pareto, use_container_width=True)
     else:
         st.info("Switch Optimization Mode to 'Constrained Pareto Optimizer' in the sidebar to view the interactive Pareto chart.")
+
+with tab4:
+    st.subheader("3D Multi-Variable Optimization Space")
+    st.write("Rotate and zoom to analyze the multi-dimensional trade-off between mechanical strength, production cost, and environmental carbon intensity.")
+    
+    if not df_candidates_all.empty:
+        candidate_co2 = []
+        for _, row in df_candidates_all.iterrows():
+            X_c = x_scaler.transform([[row["tensile"], elastic, water_abs]])
+            pred_c_scaled = model.predict(X_c)
+            pred_c = y_scaler.inverse_transform(pred_c_scaled)[0]
+            
+            a_c = max(0.0, float(pred_c[0]))
+            s_c = max(0.0, float(pred_c[1]))
+            g_c = max(0.0, float(pred_c[2]))
+            sob_c = max(0.0, float(pred_c[3]))
+            sol_c = max(0.0, 100.0 - (a_c + s_c + g_c + sob_c))
+            
+            co2_val = (
+                (a_c / 100.0) * co2_agar +
+                (s_c / 100.0) * co2_starch +
+                (g_c / 100.0) * co2_gly +
+                (sob_c / 100.0) * co2_sorb +
+                (sol_c / 100.0) * co2_water
+            )
+            candidate_co2.append(co2_val)
+            
+        df_candidates_all["co2"] = candidate_co2
+
+        fig_3d = px.scatter_3d(
+            df_candidates_all,
+            x="tensile",
+            y="cost",
+            z="co2",
+            color="score",
+            color_continuous_scale="Viridis",
+            labels={
+                "tensile": "Tensile Strength (MPa)", 
+                "cost": "Cost ($/kg)", 
+                "co2": "Carbon Footprint (kg CO₂e/kg)",
+                "score": "Optimization Score"
+            },
+            title="3D Tensile Strength vs. Cost vs. Carbon Footprint Frontier"
+        )
+        
+        fig_3d.add_scatter3d(
+            x=[tensile],
+            y=[est_cost_per_kg],
+            z=[est_co2_per_kg],
+            mode="markers",
+            marker=dict(size=10, color="red", symbol="diamond"),
+            name="Selected Target Point"
+        )
+        
+        fig_3d.update_layout(
+            template="plotly_white",
+            margin=dict(l=0, r=0, b=0, t=40),
+            height=600
+        )
+        st.plotly_chart(fig_3d, use_container_width=True)
+    else:
+        st.info("Switch Optimization Mode to 'Constrained Pareto Optimizer' in the sidebar to populate the 3D surface model.")
 
 # --- HISTORICAL LOGS DISPLAY & CSV EXPORT ---
 with st.expander("📊 View Export History Log & CSV Export"):
