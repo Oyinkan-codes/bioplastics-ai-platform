@@ -31,7 +31,6 @@ class PropertyTest(Base):
     elastic_modulus_gpa = Column(Float)
     water_absorption_percent = Column(Float)
 
-# Historical Export Log Table with Project Name / Batch Code
 class ExportLog(Base):
     __tablename__ = 'export_logs'
     id = Column(Integer, primary_key=True)
@@ -45,10 +44,10 @@ class ExportLog(Base):
     glycerin_percent = Column(Float)
     sorbitol_percent = Column(Float)
     water_percent = Column(Float)
+    est_cost_per_kg = Column(Float, default=0.0)
 
 engine = create_engine('sqlite:///bioplastics.db')
 
-# Ensure missing tables/columns exist in SQLite
 Base.metadata.create_all(engine)
 
 def upgrade_db_schema():
@@ -59,18 +58,18 @@ def upgrade_db_schema():
                 conn.commit()
             except Exception:
                 pass
-        try:
-            conn.execute(text("ALTER TABLE export_logs ADD COLUMN project_name VARCHAR DEFAULT 'Unnamed Project';"))
-            conn.commit()
-        except Exception:
-            pass
+        for col in [('project_name', "VARCHAR DEFAULT 'Unnamed Project'"), ('est_cost_per_kg', 'FLOAT DEFAULT 0.0')]:
+            try:
+                conn.execute(text(f"ALTER TABLE export_logs ADD COLUMN {col[0]} {col[1]};"))
+                conn.commit()
+            except Exception:
+                pass
 
 upgrade_db_schema()
 
 Session = sessionmaker(bind=engine)
 
-# Helper function to save export entries with project name
-def log_recipe_export(project_name, tensile, elastic, water_abs, recipe):
+def log_recipe_export(project_name, tensile, elastic, water_abs, recipe, cost_per_kg):
     session = Session()
     log_entry = ExportLog(
         project_name=project_name if project_name.strip() else "Batch-" + datetime.utcnow().strftime("%Y%m%d-%H%M"),
@@ -81,7 +80,8 @@ def log_recipe_export(project_name, tensile, elastic, water_abs, recipe):
         starch_percent=recipe["Starch"],
         glycerin_percent=recipe["Glycerin"],
         sorbitol_percent=recipe["Sorbitol"],
-        water_percent=recipe["Water / Solvent"]
+        water_percent=recipe["Water / Solvent"],
+        est_cost_per_kg=cost_per_kg
     )
     session.add(log_entry)
     session.commit()
@@ -127,7 +127,7 @@ def load_and_train():
 model, x_scaler, y_scaler = load_and_train()
 
 # --- PDF GENERATOR HELPER ---
-def create_pdf_report(project_name, tensile, elastic, water_abs, recipe):
+def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_per_kg):
     pdf = FPDF()
     pdf.add_page()
     
@@ -151,6 +151,12 @@ def create_pdf_report(project_name, tensile, elastic, water_abs, recipe):
     for component, val in recipe.items():
         pdf.cell(0, 6, f"  - {component}: {val:.2f}%", ln=True)
         
+    pdf.ln(8)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "3. Estimated Economic Analysis", ln=True)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 6, f"  - Estimated Raw Material Cost: ${cost_per_kg:.2f} / kg", ln=True)
+
     pdf.ln(12)
     pdf.set_font("Helvetica", "I", 9)
     pdf.cell(0, 5, "Note: Ratios are predicted using a multi-layer neural network.", ln=True)
@@ -159,19 +165,27 @@ def create_pdf_report(project_name, tensile, elastic, water_abs, recipe):
 
 # --- APP LAYOUT ---
 st.title("🌱 Bioplastics AI Formulation Platform")
-st.write("Adjust target properties to generate optimal chemical formulation ratios.")
+st.write("Adjust target properties to generate optimal chemical formulation ratios and cost projections.")
+
+# Sidebar for Raw Material Unit Pricing Configuration
+st.sidebar.header("💵 Raw Material Unit Costs ($/kg)")
+cost_agar = st.sidebar.number_input("Agar ($/kg)", value=25.0, step=1.0)
+cost_starch = st.sidebar.number_input("Starch ($/kg)", value=1.5, step=0.1)
+cost_glycerin = st.sidebar.number_input("Glycerin ($/kg)", value=2.0, step=0.1)
+cost_sorbitol = st.sidebar.number_input("Sorbitol ($/kg)", value=2.5, step=0.1)
+cost_water = st.sidebar.number_input("Water/Solvent ($/kg)", value=0.05, step=0.01)
 
 col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("Target Mechanical Properties")
-    project_code = st.text_input("Project / Batch Code", value="BIO-BATCH-001", help="Enter a identifier for lab logging")
+    project_code = st.text_input("Project / Batch Code", value="BIO-BATCH-001")
     tensile = st.slider("Tensile Strength (MPa)", 10.0, 50.0, 30.0, 0.5)
     elastic = st.slider("Elastic Modulus (GPa)", 0.5, 3.5, 2.0, 0.1)
     water_abs = st.slider("Water Absorption (%)", 20.0, 60.0, 40.0, 1.0)
 
 with col2:
-    st.subheader("AI Recommended Recipe")
+    st.subheader("AI Recommended Recipe & Economics")
     X_in = x_scaler.transform([[tensile, elastic, water_abs]])
     pred_scaled = model.predict(X_in)
     pred_actual = y_scaler.inverse_transform(pred_scaled)[0]
@@ -182,11 +196,23 @@ with col2:
     sorb_pct = max(0.0, float(pred_actual[3]))
     solvent_pct = max(0.0, 100.0 - (agar_pct + starch_pct + gly_pct + sorb_pct))
     
+    # Calculate estimated cost per kg
+    est_cost_per_kg = (
+        (agar_pct / 100.0) * cost_agar +
+        (starch_pct / 100.0) * cost_starch +
+        (gly_pct / 100.0) * cost_glycerin +
+        (sorb_pct / 100.0) * cost_sorbitol +
+        (solvent_pct / 100.0) * cost_water
+    )
+    
     st.metric("Recommended Agar (%)", f"{agar_pct:.2f}%")
     st.metric("Recommended Starch (%)", f"{starch_pct:.2f}%")
     st.metric("Recommended Glycerin (%)", f"{gly_pct:.2f}%")
     st.metric("Recommended Sorbitol (%)", f"{sorb_pct:.2f}%")
     st.metric("Water / Solvent Balance (%)", f"{solvent_pct:.2f}%")
+    
+    st.markdown("---")
+    st.metric("💡 Estimated Raw Material Cost", f"${est_cost_per_kg:.2f} / kg")
 
     recipe_dict = {
         "Agar": agar_pct,
@@ -196,13 +222,9 @@ with col2:
         "Water / Solvent": solvent_pct
     }
     
-    pdf_bytes = create_pdf_report(project_code, tensile, elastic, water_abs, recipe_dict)
+    pdf_bytes = create_pdf_report(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg)
     
-    st.write("---")
-    
-    filename_clean = "".join(c for c in project_code if c.isalnum() or c in ('-', '_')).strip()
-    if not filename_clean:
-        filename_clean = "bioplastic_report"
+    filename_clean = "".join(c for c in project_code if c.isalnum() or c in ('-', '_')).strip() or "bioplastic_report"
 
     if st.download_button(
         label=f"📄 Export PDF Report for '{project_code}'",
@@ -211,9 +233,9 @@ with col2:
         mime="application/pdf",
         use_container_width=True,
         on_click=log_recipe_export,
-        args=(project_code, tensile, elastic, water_abs, recipe_dict)
+        args=(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg)
     ):
-        st.success(f"Report for '{project_code}' downloaded and saved to database history!")
+        st.success(f"Report for '{project_code}' downloaded and logged with cost analysis!")
 
 # --- HISTORICAL LOGS DISPLAY ---
 with st.expander("📊 View Export History Log"):
@@ -232,7 +254,8 @@ with st.expander("📊 View Export History Log"):
             "Starch (%)": f"{log.starch_percent:.2f}",
             "Glycerin (%)": f"{log.glycerin_percent:.2f}",
             "Sorbitol (%)": f"{log.sorbitol_percent:.2f}",
-            "Solvent (%)": f"{log.water_percent:.2f}"
+            "Solvent (%)": f"{log.water_percent:.2f}",
+            "Est. Cost ($/kg)": f"${log.est_cost_per_kg:.2f}" if log.est_cost_per_kg else "$0.00"
         } for log in logs]
         st.dataframe(pd.DataFrame(log_data), use_container_width=True)
     else:
