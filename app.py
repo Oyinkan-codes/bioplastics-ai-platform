@@ -86,6 +86,44 @@ def log_recipe_export(project_name, tensile, elastic, water_abs, recipe, cost_pe
     session.commit()
     session.close()
 
+# --- SYNTHETIC DATA GENERATOR ---
+def seed_synthetic_data(num_samples=30):
+    session = Session()
+    np.random.seed(42)
+    
+    for i in range(num_samples):
+        agar = float(np.random.uniform(10, 40))
+        starch = float(np.random.uniform(5, 30))
+        glycerin = float(np.random.uniform(5, 25))
+        sorbitol = float(np.random.uniform(2, 15))
+        water = max(0.0, 100.0 - (agar + starch + glycerin + sorbitol))
+        
+        tensile = (agar * 0.8) + (starch * 0.4) - (glycerin * 0.3) + np.random.normal(0, 2)
+        elastic = (agar * 0.05) + (starch * 0.03) + np.random.normal(0, 0.2)
+        water_abs = 60.0 - (agar * 0.5) - (starch * 0.2) + (glycerin * 0.4) + np.random.normal(0, 3)
+        
+        form = Formulation(
+            batch_code=f"SYN-{i+1:03d}",
+            agar_percent=agar,
+            starch_percent=starch,
+            glycerin_percent=glycerin,
+            sorbitol_percent=sorbitol,
+            water_percent=water
+        )
+        session.add(form)
+        session.flush()
+        
+        prop = PropertyTest(
+            formulation_id=form.id,
+            tensile_strength_mpa=max(5.0, tensile),
+            elastic_modulus_gpa=max(0.1, elastic),
+            water_absorption_percent=max(10.0, water_abs)
+        )
+        session.add(prop)
+        
+    session.commit()
+    session.close()
+
 # --- MODEL TRAINING ---
 @st.cache_resource
 def load_and_train():
@@ -107,6 +145,11 @@ def load_and_train():
         })
     session.close()
     
+    # If DB is empty, seed synthetic trials automatically
+    if not data:
+        seed_synthetic_data(40)
+        return load_and_train()
+    
     df = pd.DataFrame(data)
     X = df[['tensile_strength', 'elastic_modulus', 'water_absorption']].values
     y = df[['agar_percent', 'starch_percent', 'glycerin_percent', 'sorbitol_percent']].values
@@ -125,7 +168,7 @@ def load_and_train():
 model, x_scaler, y_scaler = load_and_train()
 
 # --- PDF GENERATOR ---
-def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_per_kg, batch_kg):
+def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_per_kg, batch_kg, discount_pct):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 18)
@@ -153,6 +196,7 @@ def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_pe
     pdf.set_font("Helvetica", "B", 13)
     pdf.cell(0, 8, "3. Economic Projections", ln=True)
     pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 6, f"  - Applied Volume Discount Tier: {discount_pct*100:.0f}% off", ln=True)
     pdf.cell(0, 6, f"  - Estimated Unit Cost: ${cost_per_kg:.2f} / kg", ln=True)
     pdf.cell(0, 6, f"  - Total Production Batch Cost: ${cost_per_kg * batch_kg:.2f}", ln=True)
 
@@ -166,16 +210,32 @@ st.title("🌱 Bioplastics AI Formulation Platform")
 st.write("Adjust target properties to generate optimal chemical formulation ratios, cost projections, and sensitivity analysis.")
 
 # --- SIDEBAR CONTROLS ---
-st.sidebar.header("💵 Unit Costs ($/kg)")
-cost_agar = st.sidebar.number_input("Agar ($/kg)", value=25.0, step=1.0)
-cost_starch = st.sidebar.number_input("Starch ($/kg)", value=1.5, step=0.1)
-cost_glycerin = st.sidebar.number_input("Glycerin ($/kg)", value=2.0, step=0.1)
-cost_sorbitol = st.sidebar.number_input("Sorbitol ($/kg)", value=2.5, step=0.1)
-cost_water = st.sidebar.number_input("Water/Solvent ($/kg)", value=0.05, step=0.01)
+st.sidebar.header("💵 Base Unit Costs ($/kg)")
+c_agar_base = st.sidebar.number_input("Agar ($/kg)", value=25.0, step=1.0)
+c_starch_base = st.sidebar.number_input("Starch ($/kg)", value=1.5, step=0.1)
+c_gly_base = st.sidebar.number_input("Glycerin ($/kg)", value=2.0, step=0.1)
+c_sorb_base = st.sidebar.number_input("Sorbitol ($/kg)", value=2.5, step=0.1)
+c_water_base = st.sidebar.number_input("Water/Solvent ($/kg)", value=0.05, step=0.01)
 
 st.sidebar.markdown("---")
-st.sidebar.header("📦 Production Volume Scaling")
+st.sidebar.header("📦 Batch Volume & Discounts")
 batch_kg = st.sidebar.number_input("Batch Size (kg)", value=100.0, step=10.0, min_value=1.0)
+
+# BULK DISCOUNT TIERS
+discount_pct = 0.00
+if batch_kg >= 500:
+    discount_pct = 0.10
+elif batch_kg >= 100:
+    discount_pct = 0.05
+
+cost_agar = c_agar_base * (1.0 - discount_pct)
+cost_starch = c_starch_base * (1.0 - discount_pct)
+cost_glycerin = c_gly_base * (1.0 - discount_pct)
+cost_sorbitol = c_sorb_base * (1.0 - discount_pct)
+cost_water = c_water_base * (1.0 - discount_pct)
+
+if discount_pct > 0:
+    st.sidebar.success(f"🎉 **{discount_pct*100:.0f}% Bulk Discount Applied** for {batch_kg:.0f} kg batch!")
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Multi-Objective Trade-Off")
@@ -187,6 +247,13 @@ if mode == "Constrained Pareto Optimizer":
     max_agar_limit = st.sidebar.slider("Max Allowed Agar (%)", 5.0, 50.0, 25.0, 1.0)
     max_starch_limit = st.sidebar.slider("Max Allowed Starch (%)", 5.0, 50.0, 30.0, 1.0)
 
+st.sidebar.markdown("---")
+st.sidebar.header("🧪 Model Maintenance")
+if st.sidebar.button("⚡ Seed +30 Synthetic Training Trials"):
+    seed_synthetic_data(30)
+    st.cache_resource.clear()
+    st.sidebar.success("Added 30 synthetic trials and retrained AI model!")
+
 col1, col2 = st.columns([1, 1])
 
 with col1:
@@ -196,7 +263,7 @@ with col1:
     elastic = st.slider("Elastic Modulus (GPa)", 0.5, 3.5, 2.0, 0.1)
     water_abs = st.slider("Water Absorption (%)", 20.0, 60.0, 40.0, 1.0)
 
-    df_candidates_all = pd.DataFrame() # Store candidate search data for Pareto plot
+    df_candidates_all = pd.DataFrame()
 
     if mode == "Manual Target Sliders":
         tensile = st.slider("Tensile Strength (MPa)", 10.0, 50.0, 30.0, 0.5)
@@ -264,7 +331,6 @@ with col1:
                 trade_off_weight * df_valid["norm_tensile"]
             )
             
-            # Map scores back to all candidates for plotting
             df_candidates_all = df_candidates_all.merge(df_valid[["tensile", "score"]], on="tensile", how="left").fillna(0)
 
             best_row = df_valid.loc[df_valid["score"].idxmax()]
@@ -294,7 +360,6 @@ with col2:
     
     total_batch_cost = est_cost_per_kg * batch_kg
 
-    # Component mass metrics scaled to batch volume
     st.metric("Agar", f"{agar_pct:.2f}%", f"{(agar_pct/100.0)*batch_kg:.2f} kg required")
     st.metric("Starch", f"{starch_pct:.2f}%", f"{(starch_pct/100.0)*batch_kg:.2f} kg required")
     st.metric("Glycerin", f"{gly_pct:.2f}%", f"{(gly_pct/100.0)*batch_kg:.2f} kg required")
@@ -303,7 +368,7 @@ with col2:
     
     st.markdown("---")
     c_m1, c_m2 = st.columns(2)
-    c_m1.metric("💡 Cost per kg", f"${est_cost_per_kg:.2f} / kg")
+    c_m1.metric("💡 Cost per kg", f"${est_cost_per_kg:.2f} / kg", f"{discount_pct*100:.0f}% bulk disc.")
     c_m2.metric("📦 Total Batch Cost", f"${total_batch_cost:.2f}", delta=f"For {batch_kg:.0f} kg batch")
 
     recipe_dict = {
@@ -314,7 +379,7 @@ with col2:
         "Water / Solvent": solvent_pct
     }
     
-    pdf_bytes = create_pdf_report(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg, batch_kg)
+    pdf_bytes = create_pdf_report(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg, batch_kg, discount_pct)
     filename_clean = "".join(c for c in project_code if c.isalnum() or c in ('-', '_')).strip() or "bioplastic_report"
 
     if st.download_button(
@@ -450,8 +515,8 @@ with tab3:
     else:
         st.info("Switch Optimization Mode to 'Constrained Pareto Optimizer' in the sidebar to generate the interactive Pareto chart.")
 
-# --- HISTORICAL LOGS DISPLAY ---
-with st.expander("📊 View Export History Log"):
+# --- HISTORICAL LOGS DISPLAY & CSV EXPORT ---
+with st.expander("📊 View Export History Log & CSV Export"):
     session = Session()
     logs = session.query(ExportLog).order_by(ExportLog.timestamp.desc()).all()
     session.close()
@@ -470,6 +535,17 @@ with st.expander("📊 View Export History Log"):
             "Solvent (%)": f"{log.water_percent:.2f}",
             "Est. Cost ($/kg)": f"${log.est_cost_per_kg:.2f}" if log.est_cost_per_kg else "$0.00"
         } for log in logs]
-        st.dataframe(pd.DataFrame(log_data), use_container_width=True)
+        
+        df_log = pd.DataFrame(log_data)
+        st.dataframe(df_log, use_container_width=True)
+        
+        # CSV Export Button
+        csv_bytes = df_log.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Full History as CSV",
+            data=csv_bytes,
+            file_name=f"bioplastics_history_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
     else:
         st.info("No exported recipes logged yet.")
