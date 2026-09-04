@@ -19,7 +19,6 @@ st.set_page_config(
 )
 
 # --- USER AUTHENTICATION SETUP ---
-# Deep copy st.secrets credentials to allow internal dict modifications by stauth
 try:
     if hasattr(st.secrets['credentials'], 'to_dict'):
         credentials_dict = st.secrets['credentials'].to_dict()
@@ -40,8 +39,12 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=cookie_expiry
 )
 
-# Render login component
-name, authentication_status, username = authenticator.login('main', fields={'Form name': 'Bioplastic AI Platform Login'})
+# Render login component (stauth v0.3.x compatibility)
+authenticator.login(location='main')
+
+authentication_status = st.session_state.get("authentication_status")
+name = st.session_state.get("name")
+username = st.session_state.get("username")
 
 if authentication_status == False:
     st.error('Username/password is incorrect.')
@@ -158,7 +161,7 @@ def generate_pdf_report(user_name, project_name, recipe, tensile, elastic, water
 
 # --- SIDEBAR UI ---
 st.sidebar.title(f"Welcome, {name} 👋")
-authenticator.logout('Logout', 'sidebar')
+authenticator.logout(location='sidebar')
 
 st.sidebar.header("🧪 Formulation Inputs (% w/w)")
 project_name = st.sidebar.text_input("Project / Batch Name", "EcoFilm-Batch-A")
