@@ -48,7 +48,6 @@ class ExportLog(Base):
     est_cost_per_kg = Column(Float, default=0.0)
 
 engine = create_engine('sqlite:///bioplastics.db')
-
 Base.metadata.create_all(engine)
 
 def upgrade_db_schema():
@@ -67,7 +66,6 @@ def upgrade_db_schema():
                 pass
 
 upgrade_db_schema()
-
 Session = sessionmaker(bind=engine)
 
 def log_recipe_export(project_name, tensile, elastic, water_abs, recipe, cost_per_kg):
@@ -110,7 +108,6 @@ def load_and_train():
     session.close()
     
     df = pd.DataFrame(data)
-    
     X = df[['tensile_strength', 'elastic_modulus', 'water_absorption']].values
     y = df[['agar_percent', 'starch_percent', 'glycerin_percent', 'sorbitol_percent']].values
     
@@ -127,11 +124,10 @@ def load_and_train():
 
 model, x_scaler, y_scaler = load_and_train()
 
-# --- PDF GENERATOR HELPER ---
-def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_per_kg):
+# --- PDF GENERATOR ---
+def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_per_kg, batch_kg):
     pdf = FPDF()
     pdf.add_page()
-    
     pdf.set_font("Helvetica", "B", 18)
     pdf.cell(0, 10, "Bioplastics AI - Formulation Report", ln=True, align="C")
     pdf.set_font("Helvetica", "", 10)
@@ -147,29 +143,30 @@ def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_pe
     pdf.ln(8)
     
     pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 8, "2. Predicted Chemical Recipe Ratios", ln=True)
+    pdf.cell(0, 8, f"2. Predicted Recipe Ratios & Batch Requirements ({batch_kg:.1f} kg)", ln=True)
     pdf.set_font("Helvetica", "", 11)
     for component, val in recipe.items():
-        pdf.cell(0, 6, f"  - {component}: {val:.2f}%", ln=True)
+        mass_kg = (val / 100.0) * batch_kg
+        pdf.cell(0, 6, f"  - {component}: {val:.2f}% ({mass_kg:.2f} kg)", ln=True)
         
     pdf.ln(8)
     pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 8, "3. Estimated Economic Analysis", ln=True)
+    pdf.cell(0, 8, "3. Economic Projections", ln=True)
     pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 6, f"  - Estimated Raw Material Cost: ${cost_per_kg:.2f} / kg", ln=True)
+    pdf.cell(0, 6, f"  - Estimated Unit Cost: ${cost_per_kg:.2f} / kg", ln=True)
+    pdf.cell(0, 6, f"  - Total Production Batch Cost: ${cost_per_kg * batch_kg:.2f}", ln=True)
 
     pdf.ln(12)
     pdf.set_font("Helvetica", "I", 9)
     pdf.cell(0, 5, "Note: Ratios are predicted using a multi-layer neural network.", ln=True)
-    
     return bytes(pdf.output())
 
 # --- APP LAYOUT ---
 st.title("🌱 Bioplastics AI Formulation Platform")
 st.write("Adjust target properties to generate optimal chemical formulation ratios, cost projections, and sensitivity analysis.")
 
-# Sidebar Controls
-st.sidebar.header("💵 Raw Material Unit Costs ($/kg)")
+# --- SIDEBAR CONTROLS ---
+st.sidebar.header("💵 Unit Costs ($/kg)")
 cost_agar = st.sidebar.number_input("Agar ($/kg)", value=25.0, step=1.0)
 cost_starch = st.sidebar.number_input("Starch ($/kg)", value=1.5, step=0.1)
 cost_glycerin = st.sidebar.number_input("Glycerin ($/kg)", value=2.0, step=0.1)
@@ -177,11 +174,13 @@ cost_sorbitol = st.sidebar.number_input("Sorbitol ($/kg)", value=2.5, step=0.1)
 cost_water = st.sidebar.number_input("Water/Solvent ($/kg)", value=0.05, step=0.01)
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎯 Multi-Objective Trade-Off")
+st.sidebar.header("📦 Production Volume Scaling")
+batch_kg = st.sidebar.number_input("Batch Size (kg)", value=100.0, step=10.0, min_value=1.0)
 
+st.sidebar.markdown("---")
+st.sidebar.header("🎯 Multi-Objective Trade-Off")
 mode = st.sidebar.radio("Optimization Mode", ["Manual Target Sliders", "Constrained Pareto Optimizer"])
 
-# Add Hard Constraint Controls
 if mode == "Constrained Pareto Optimizer":
     st.sidebar.markdown("### 🛑 Hard Constraints")
     max_budget = st.sidebar.number_input("Max Budget ($/kg)", value=6.00, step=0.50, min_value=0.50)
@@ -197,6 +196,8 @@ with col1:
     elastic = st.slider("Elastic Modulus (GPa)", 0.5, 3.5, 2.0, 0.1)
     water_abs = st.slider("Water Absorption (%)", 20.0, 60.0, 40.0, 1.0)
 
+    df_candidates_all = pd.DataFrame() # Store candidate search data for Pareto plot
+
     if mode == "Manual Target Sliders":
         tensile = st.slider("Tensile Strength (MPa)", 10.0, 50.0, 30.0, 0.5)
     else:
@@ -210,7 +211,6 @@ with col1:
             help="0.0 = Absolute Lowest Cost | 1.0 = Absolute Highest Tensile Strength"
         )
         
-        # Pareto Search evaluation loop across 150 points for granular evaluation
         search_tensile_range = np.linspace(10.0, 50.0, 150)
         candidate_evals = []
 
@@ -239,22 +239,20 @@ with col1:
                 "starch": s_p
             })
 
-        df_candidates = pd.DataFrame(candidate_evals)
+        df_candidates_all = pd.DataFrame(candidate_evals)
 
-        # APPLY HARD CONSTRAINTS FILTERING
         valid_mask = (
-            (df_candidates["cost"] <= max_budget) &
-            (df_candidates["agar"] <= max_agar_limit) &
-            (df_candidates["starch"] <= max_starch_limit)
+            (df_candidates_all["cost"] <= max_budget) &
+            (df_candidates_all["agar"] <= max_agar_limit) &
+            (df_candidates_all["starch"] <= max_starch_limit)
         )
         
-        df_valid = df_candidates[valid_mask].copy()
+        df_valid = df_candidates_all[valid_mask].copy()
 
         if df_valid.empty:
-            st.error(f"⚠️ No valid formulation found satisfying budget <= ${max_budget:.2f}/kg, Agar <= {max_agar_limit}%, and Starch <= {max_starch_limit}%. Defaulting to fallback target.")
+            st.error(f"⚠️ No valid formulation satisfies budget <= ${max_budget:.2f}/kg, Agar <= {max_agar_limit}%, and Starch <= {max_starch_limit}%.")
             tensile = 10.0
         else:
-            # MinMax Normalization on valid candidates only
             c_min, c_max = df_valid["cost"].min(), df_valid["cost"].max()
             t_min, t_max = df_valid["tensile"].min(), df_valid["tensile"].max()
 
@@ -265,14 +263,17 @@ with col1:
                 (1.0 - trade_off_weight) * (1.0 - df_valid["norm_cost"]) + 
                 trade_off_weight * df_valid["norm_tensile"]
             )
+            
+            # Map scores back to all candidates for plotting
+            df_candidates_all = df_candidates_all.merge(df_valid[["tensile", "score"]], on="tensile", how="left").fillna(0)
 
             best_row = df_valid.loc[df_valid["score"].idxmax()]
             tensile = round(float(best_row["tensile"]), 2)
             
-            st.success(f"✅ **Constrained Optimal Target:** `{tensile} MPa` (Valid candidates: {len(df_valid)}/150)")
+            st.success(f"✅ **Constrained Optimal Target:** `{tensile} MPa` ({len(df_valid)}/150 valid candidates)")
 
 with col2:
-    st.subheader("AI Recommended Recipe & Economics")
+    st.subheader("AI Recommended Recipe & Batch Requirements")
     X_in = x_scaler.transform([[tensile, elastic, water_abs]])
     pred_scaled = model.predict(X_in)
     pred_actual = y_scaler.inverse_transform(pred_scaled)[0]
@@ -291,14 +292,19 @@ with col2:
         (solvent_pct / 100.0) * cost_water
     )
     
-    st.metric("Recommended Agar (%)", f"{agar_pct:.2f}%")
-    st.metric("Recommended Starch (%)", f"{starch_pct:.2f}%")
-    st.metric("Recommended Glycerin (%)", f"{gly_pct:.2f}%")
-    st.metric("Recommended Sorbitol (%)", f"{sorb_pct:.2f}%")
-    st.metric("Water / Solvent Balance (%)", f"{solvent_pct:.2f}%")
+    total_batch_cost = est_cost_per_kg * batch_kg
+
+    # Component mass metrics scaled to batch volume
+    st.metric("Agar", f"{agar_pct:.2f}%", f"{(agar_pct/100.0)*batch_kg:.2f} kg required")
+    st.metric("Starch", f"{starch_pct:.2f}%", f"{(starch_pct/100.0)*batch_kg:.2f} kg required")
+    st.metric("Glycerin", f"{gly_pct:.2f}%", f"{(gly_pct/100.0)*batch_kg:.2f} kg required")
+    st.metric("Sorbitol", f"{sorb_pct:.2f}%", f"{(sorb_pct/100.0)*batch_kg:.2f} kg required")
+    st.metric("Water / Solvent", f"{solvent_pct:.2f}%", f"{(solvent_pct/100.0)*batch_kg:.2f} kg required")
     
     st.markdown("---")
-    st.metric("💡 Estimated Raw Material Cost", f"${est_cost_per_kg:.2f} / kg")
+    c_m1, c_m2 = st.columns(2)
+    c_m1.metric("💡 Cost per kg", f"${est_cost_per_kg:.2f} / kg")
+    c_m2.metric("📦 Total Batch Cost", f"${total_batch_cost:.2f}", delta=f"For {batch_kg:.0f} kg batch")
 
     recipe_dict = {
         "Agar": agar_pct,
@@ -308,8 +314,7 @@ with col2:
         "Water / Solvent": solvent_pct
     }
     
-    pdf_bytes = create_pdf_report(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg)
-    
+    pdf_bytes = create_pdf_report(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg, batch_kg)
     filename_clean = "".join(c for c in project_code if c.isalnum() or c in ('-', '_')).strip() or "bioplastic_report"
 
     if st.download_button(
@@ -321,11 +326,15 @@ with col2:
         on_click=log_recipe_export,
         args=(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg)
     ):
-        st.success(f"Report for '{project_code}' downloaded and logged with cost analysis!")
+        st.success(f"Report for '{project_code}' downloaded!")
 
-# --- MULTI-VARIABLE SENSITIVITY ANALYSIS ---
+# --- MULTI-VARIABLE SENSITIVITY ANALYSIS & TABS ---
 st.markdown("---")
-tab1, tab2 = st.tabs(["📊 Formulation Composition Shift", "📈 Tensile vs. Cost Curve"])
+tab1, tab2, tab3 = st.tabs([
+    "📊 Formulation Composition Shift", 
+    "📈 Tensile vs. Cost Curve", 
+    "🎯 Pareto Trade-Off Frontier"
+])
 
 tensile_range = np.linspace(10.0, 50.0, 50)
 composition_rows = []
@@ -377,21 +386,15 @@ with tab1:
         title="Formulation Component Breakdown vs. Target Tensile Strength",
         color_discrete_sequence=px.colors.qualitative.Set2
     )
-    
     fig_area.add_vline(
         x=tensile, 
         line_width=2, 
         line_dash="dash", 
         line_color="red",
-        annotation_text=f" Constrained Selection ({tensile} MPa)",
+        annotation_text=f" Selected Target ({tensile} MPa)",
         annotation_position="top left"
     )
-    
-    fig_area.update_layout(
-        template="plotly_white",
-        yaxis_title="Composition Percentage (%)",
-        xaxis_title="Tensile Strength (MPa)"
-    )
+    fig_area.update_layout(template="plotly_white", yaxis_title="Composition Percentage (%)", xaxis_title="Tensile Strength (MPa)")
     st.plotly_chart(fig_area, use_container_width=True)
 
 with tab2:
@@ -404,8 +407,6 @@ with tab2:
         title="Estimated Batch Cost ($/kg) vs Target Tensile Strength (MPa)",
         markers=True
     )
-    
-    # Highlight budget threshold if constrained optimizer is active
     if mode == "Constrained Pareto Optimizer":
         fig_cost.add_hline(
             y=max_budget,
@@ -415,17 +416,39 @@ with tab2:
             annotation_text=f" Max Budget Limit (${max_budget:.2f}/kg)",
             annotation_position="bottom right"
         )
-    
     fig_cost.add_scatter(
         x=[tensile],
         y=[est_cost_per_kg],
         mode="markers",
         marker=dict(size=14, color="red"),
-        name="Constrained Target"
+        name="Current Selection"
     )
-    
     fig_cost.update_layout(template="plotly_white")
     st.plotly_chart(fig_cost, use_container_width=True)
+
+with tab3:
+    st.subheader("2D Pareto Trade-Off Frontier")
+    if not df_candidates_all.empty:
+        fig_pareto = px.scatter(
+            df_candidates_all,
+            x="tensile",
+            y="cost",
+            color="score",
+            color_continuous_scale="Viridis",
+            labels={"tensile": "Tensile Strength (MPa)", "cost": "Estimated Cost ($/kg)", "score": "Optimization Score"},
+            title="Pareto Frontier (Strength vs. Cost)"
+        )
+        fig_pareto.add_scatter(
+            x=[tensile],
+            y=[est_cost_per_kg],
+            mode="markers",
+            marker=dict(size=16, color="red", symbol="star"),
+            name="Selected Optimal Point"
+        )
+        fig_pareto.update_layout(template="plotly_white")
+        st.plotly_chart(fig_pareto, use_container_width=True)
+    else:
+        st.info("Switch Optimization Mode to 'Constrained Pareto Optimizer' in the sidebar to generate the interactive Pareto chart.")
 
 # --- HISTORICAL LOGS DISPLAY ---
 with st.expander("📊 View Export History Log"):
