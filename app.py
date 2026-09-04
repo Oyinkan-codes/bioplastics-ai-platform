@@ -197,7 +197,6 @@ with col2:
     sorb_pct = max(0.0, float(pred_actual[3]))
     solvent_pct = max(0.0, 100.0 - (agar_pct + starch_pct + gly_pct + sorb_pct))
     
-    # Cost calculation
     est_cost_per_kg = (
         (agar_pct / 100.0) * cost_agar +
         (starch_pct / 100.0) * cost_starch +
@@ -238,13 +237,14 @@ with col2:
     ):
         st.success(f"Report for '{project_code}' downloaded and logged with cost analysis!")
 
-# --- PLOTLY INTERACTIVE SENSITIVITY CHART ---
+# --- MULTI-VARIABLE SENSITIVITY ANALYSIS ---
 st.markdown("---")
-st.subheader("📈 Tensile Strength vs. Cost Sensitivity Analysis")
+tab1, tab2 = st.tabs(["📊 Formulation Composition Shift", "📈 Tensile vs. Cost Curve"])
 
 # Generate range of tensile strength values (10 to 50 MPa)
-tensile_range = np.linspace(10.0, 50.0, 40)
-chart_data = []
+tensile_range = np.linspace(10.0, 50.0, 50)
+composition_rows = []
+cost_rows = []
 
 for t_val in tensile_range:
     X_sample = x_scaler.transform([[t_val, elastic, water_abs]])
@@ -265,35 +265,75 @@ for t_val in tensile_range:
         (sol_pct / 100.0) * cost_water
     )
     
-    chart_data.append({
+    # Rows for stacked area chart (Melted format for Plotly Express)
+    composition_rows.extend([
+        {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": a_pct, "Ingredient": "Agar"},
+        {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": s_pct, "Ingredient": "Starch"},
+        {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": g_pct, "Ingredient": "Glycerin"},
+        {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": sob_pct, "Ingredient": "Sorbitol"},
+        {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": sol_pct, "Ingredient": "Water / Solvent"}
+    ])
+    
+    cost_rows.append({
         "Tensile Strength (MPa)": round(t_val, 2),
         "Estimated Cost ($/kg)": round(c_kg, 2),
         "Agar Ratio (%)": round(a_pct, 2)
     })
 
-df_chart = pd.DataFrame(chart_data)
+df_comp = pd.DataFrame(composition_rows)
+df_cost = pd.DataFrame(cost_rows)
 
-# Render Plotly Line Chart
-fig = px.line(
-    df_chart, 
-    x="Tensile Strength (MPa)", 
-    y="Estimated Cost ($/kg)", 
-    hover_data=["Agar Ratio (%)"],
-    title="Estimated Batch Cost ($/kg) vs Target Tensile Strength (MPa)",
-    markers=True
-)
+with tab1:
+    st.subheader("Component Proportion Shifts Across Tensile Target")
+    
+    # Plotly Stacked Area Chart
+    fig_area = px.area(
+        df_comp,
+        x="Tensile Strength (MPa)",
+        y="Component Ratio (%)",
+        color="Ingredient",
+        title="Formulation Component Breakdown vs. Target Tensile Strength",
+        color_discrete_sequence=px.colors.qualitative.Set2
+    )
+    
+    # Add vertical reference line for user's active slider position
+    fig_area.add_vline(
+        x=tensile, 
+        line_width=2, 
+        line_dash="dash", 
+        line_color="red",
+        annotation_text=f" Current Target ({tensile} MPa)",
+        annotation_position="top left"
+    )
+    
+    fig_area.update_layout(
+        template="plotly_white",
+        yaxis_title="Composition Percentage (%)",
+        xaxis_title="Tensile Strength (MPa)"
+    )
+    st.plotly_chart(fig_area, use_container_width=True)
 
-# Add highlight dot for current slider selection
-fig.add_scatter(
-    x=[tensile],
-    y=[est_cost_per_kg],
-    mode="markers",
-    marker=dict(size=14, color="red"),
-    name="Current Target"
-)
-
-fig.update_layout(template="plotly_white")
-st.plotly_chart(fig, use_container_width=True)
+with tab2:
+    st.subheader("Tensile Strength vs. Cost Sensitivity Analysis")
+    fig_cost = px.line(
+        df_cost, 
+        x="Tensile Strength (MPa)", 
+        y="Estimated Cost ($/kg)", 
+        hover_data=["Agar Ratio (%)"],
+        title="Estimated Batch Cost ($/kg) vs Target Tensile Strength (MPa)",
+        markers=True
+    )
+    
+    fig_cost.add_scatter(
+        x=[tensile],
+        y=[est_cost_per_kg],
+        mode="markers",
+        marker=dict(size=14, color="red"),
+        name="Current Target"
+    )
+    
+    fig_cost.update_layout(template="plotly_white")
+    st.plotly_chart(fig_cost, use_container_width=True)
 
 # --- HISTORICAL LOGS DISPLAY ---
 with st.expander("📊 View Export History Log"):
