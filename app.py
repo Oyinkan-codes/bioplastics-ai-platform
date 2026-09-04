@@ -168,7 +168,7 @@ def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_pe
 st.title("🌱 Bioplastics AI Formulation Platform")
 st.write("Adjust target properties to generate optimal chemical formulation ratios, cost projections, and sensitivity analysis.")
 
-# Sidebar for Raw Material Unit Pricing Configuration
+# Sidebar Controls
 st.sidebar.header("💵 Raw Material Unit Costs ($/kg)")
 cost_agar = st.sidebar.number_input("Agar ($/kg)", value=25.0, step=1.0)
 cost_starch = st.sidebar.number_input("Starch ($/kg)", value=1.5, step=0.1)
@@ -176,14 +176,77 @@ cost_glycerin = st.sidebar.number_input("Glycerin ($/kg)", value=2.0, step=0.1)
 cost_sorbitol = st.sidebar.number_input("Sorbitol ($/kg)", value=2.5, step=0.1)
 cost_water = st.sidebar.number_input("Water/Solvent ($/kg)", value=0.05, step=0.01)
 
+st.sidebar.markdown("---")
+st.sidebar.header("🎯 Multi-Objective Trade-Off")
+
+mode = st.sidebar.radio("Optimization Mode", ["Manual Target Sliders", "Automated Pareto Optimizer"])
+
 col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("Target Mechanical Properties")
     project_code = st.text_input("Project / Batch Code", value="BIO-BATCH-001")
-    tensile = st.slider("Tensile Strength (MPa)", 10.0, 50.0, 30.0, 0.5)
+    
     elastic = st.slider("Elastic Modulus (GPa)", 0.5, 3.5, 2.0, 0.1)
     water_abs = st.slider("Water Absorption (%)", 20.0, 60.0, 40.0, 1.0)
+
+    if mode == "Manual Target Sliders":
+        tensile = st.slider("Tensile Strength (MPa)", 10.0, 50.0, 30.0, 0.5)
+    else:
+        st.markdown("### ⚖️ Trade-Off Preference")
+        trade_off_weight = st.slider(
+            "Priority Weighting", 
+            min_value=0.0, 
+            max_value=1.0, 
+            value=0.5, 
+            step=0.05,
+            help="0.0 = Absolute Lowest Cost | 1.0 = Absolute Highest Tensile Strength"
+        )
+        
+        # Pareto Search evaluation loop
+        search_tensile_range = np.linspace(10.0, 50.0, 100)
+        candidate_evals = []
+
+        for t_val in search_tensile_range:
+            X_s = x_scaler.transform([[t_val, elastic, water_abs]])
+            pred_s_scaled = model.predict(X_s)
+            pred_s = y_scaler.inverse_transform(pred_s_scaled)[0]
+
+            a_p = max(0.0, float(pred_s[0]))
+            s_p = max(0.0, float(pred_s[1]))
+            g_p = max(0.0, float(pred_s[2]))
+            sob_p = max(0.0, float(pred_s[3]))
+            sol_p = max(0.0, 100.0 - (a_p + s_p + g_p + sob_p))
+
+            cost_eval = (
+                (a_p / 100.0) * cost_agar +
+                (s_p / 100.0) * cost_starch +
+                (g_p / 100.0) * cost_glycerin +
+                (sob_p / 100.0) * cost_sorbitol +
+                (sol_p / 100.0) * cost_water
+            )
+            candidate_evals.append({"tensile": t_val, "cost": cost_eval})
+
+        df_candidates = pd.DataFrame(candidate_evals)
+
+        # MinMax Normalization for multi-objective scoring
+        c_min, c_max = df_candidates["cost"].min(), df_candidates["cost"].max()
+        t_min, t_max = df_candidates["tensile"].min(), df_candidates["tensile"].max()
+
+        # Score formulation candidates
+        df_candidates["norm_cost"] = (df_candidates["cost"] - c_min) / (c_max - c_min + 1e-6)
+        df_candidates["norm_tensile"] = (df_candidates["tensile"] - t_min) / (t_max - t_min + 1e-6)
+        
+        # Weighted score: Minimize normalized cost, maximize normalized tensile strength
+        df_candidates["score"] = (
+            (1.0 - trade_off_weight) * (1.0 - df_candidates["norm_cost"]) + 
+            trade_off_weight * df_candidates["norm_tensile"]
+        )
+
+        best_row = df_candidates.loc[df_candidates["score"].idxmax()]
+        tensile = round(float(best_row["tensile"]), 2)
+        
+        st.info(f"💡 **Optimal Recommended Tensile Target:** `{tensile} MPa`")
 
 with col2:
     st.subheader("AI Recommended Recipe & Economics")
@@ -241,7 +304,6 @@ with col2:
 st.markdown("---")
 tab1, tab2 = st.tabs(["📊 Formulation Composition Shift", "📈 Tensile vs. Cost Curve"])
 
-# Generate range of tensile strength values (10 to 50 MPa)
 tensile_range = np.linspace(10.0, 50.0, 50)
 composition_rows = []
 cost_rows = []
@@ -265,7 +327,6 @@ for t_val in tensile_range:
         (sol_pct / 100.0) * cost_water
     )
     
-    # Rows for stacked area chart (Melted format for Plotly Express)
     composition_rows.extend([
         {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": a_pct, "Ingredient": "Agar"},
         {"Tensile Strength (MPa)": t_val, "Component Ratio (%)": s_pct, "Ingredient": "Starch"},
@@ -285,8 +346,6 @@ df_cost = pd.DataFrame(cost_rows)
 
 with tab1:
     st.subheader("Component Proportion Shifts Across Tensile Target")
-    
-    # Plotly Stacked Area Chart
     fig_area = px.area(
         df_comp,
         x="Tensile Strength (MPa)",
@@ -296,13 +355,12 @@ with tab1:
         color_discrete_sequence=px.colors.qualitative.Set2
     )
     
-    # Add vertical reference line for user's active slider position
     fig_area.add_vline(
         x=tensile, 
         line_width=2, 
         line_dash="dash", 
         line_color="red",
-        annotation_text=f" Current Target ({tensile} MPa)",
+        annotation_text=f" Optimal Selection ({tensile} MPa)",
         annotation_position="top left"
     )
     
@@ -329,7 +387,7 @@ with tab2:
         y=[est_cost_per_kg],
         mode="markers",
         marker=dict(size=14, color="red"),
-        name="Current Target"
+        name="Optimal Target"
     )
     
     fig_cost.update_layout(template="plotly_white")
