@@ -1,5 +1,7 @@
 import io
+import os
 import datetime
+import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -24,7 +26,7 @@ st.set_page_config(
 
 # Initialize Session State Variables
 if "user_plan" not in st.session_state:
-    st.session_state["user_plan"] = "free"  # 'free', 'researcher', 'enterprise'
+    st.session_state["user_plan"] = "free"  # Options: 'free', 'researcher', 'enterprise'
 
 if "daily_predictions" not in st.session_state:
     st.session_state["daily_predictions"] = 0
@@ -32,7 +34,7 @@ if "daily_predictions" not in st.session_state:
 if "last_prediction_date" not in st.session_state:
     st.session_state["last_prediction_date"] = datetime.date.today()
 
-# Daily Quota Reset Logic (Resets at Midnight WAT)
+# Daily Quota Reset Logic (Resets daily at Midnight WAT)
 today = datetime.date.today()
 if st.session_state["last_prediction_date"] < today:
     st.session_state["daily_predictions"] = 0
@@ -43,35 +45,43 @@ if st.session_state["last_prediction_date"] < today:
 # 2. ML MODEL & OPTIMIZER ENGINES
 # ==========================================
 @st.cache_resource
-def train_baseline_model():
-    """Trains a baseline multi-output regressor on synthetic biopolymer physics data."""
-    np.random.seed(42)
-    N = 1000
+def load_or_train_model():
+    """
+    Loads a pre-trained model from 'models/bioplastic_rf_v1.pkl'.
+    If the file is missing, trains a synthetic fallback model for smooth testing.
+    """
+    model_path = os.path.join("models", "bioplastic_rf_v1.pkl")
     
-    # Features: [Glycerin %, Water %, Citric Acid %, Chitosan %]
-    glycerin = np.random.uniform(5, 40, N)
-    water = np.random.uniform(10, 50, N)
-    citric_acid = np.random.uniform(0.5, 5.0, N)
-    chitosan = np.random.uniform(0.0, 3.0, N)
-    
-    X = np.column_stack([glycerin, water, citric_acid, chitosan])
-    
-    # Simulated Physics Equations
-    tensile = 50.0 - (glycerin * 0.9) - (water * 0.4) + (citric_acid * 2.5) + (chitosan * 3.1) + np.random.normal(0, 1, N)
-    elasticity = 2.0 + (glycerin * 2.2) + (water * 0.3) - (citric_acid * 0.8) + np.random.normal(0, 1, N)
-    water_abs = 15.0 + (water * 0.8) - (glycerin * 0.1) - (citric_acid * 1.5) - (chitosan * 2.0) + np.random.normal(0, 1, N)
-    
-    y = np.column_stack([
-        np.clip(tensile, 1.0, 100.0),
-        np.clip(elasticity, 1.0, 150.0),
-        np.clip(water_abs, 1.0, 90.0)
-    ])
-    
-    model = RandomForestRegressor(n_estimators=50, random_state=42)
-    model.fit(X, y)
-    return model
+    if os.path.exists(model_path):
+        return joblib.load(model_path)
+    else:
+        # Fallback Synthetic Training (so the app works before model export)
+        np.random.seed(42)
+        N = 1000
+        
+        glycerin = np.random.uniform(5, 40, N)
+        water = np.random.uniform(10, 50, N)
+        citric_acid = np.random.uniform(0.5, 5.0, N)
+        chitosan = np.random.uniform(0.0, 3.0, N)
+        
+        X = np.column_stack([glycerin, water, citric_acid, chitosan])
+        
+        tensile = 50.0 - (glycerin * 0.9) - (water * 0.4) + (citric_acid * 2.5) + (chitosan * 3.1) + np.random.normal(0, 1, N)
+        elasticity = 2.0 + (glycerin * 2.2) + (water * 0.3) - (citric_acid * 0.8) + np.random.normal(0, 1, N)
+        water_abs = 15.0 + (water * 0.8) - (glycerin * 0.1) - (citric_acid * 1.5) - (chitosan * 2.0) + np.random.normal(0, 1, N)
+        
+        y = np.column_stack([
+            np.clip(tensile, 1.0, 100.0),
+            np.clip(elasticity, 1.0, 150.0),
+            np.clip(water_abs, 1.0, 90.0)
+        ])
+        
+        fallback_model = RandomForestRegressor(n_estimators=50, random_state=42)
+        fallback_model.fit(X, y)
+        return fallback_model
 
-model = train_baseline_model()
+# Load model into app memory
+model = load_or_train_model()
 
 def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
     """Calculates required additive ratios based on target mechanical properties."""
