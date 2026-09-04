@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 from fpdf import FPDF
-import streamlit_authenticator as stauth
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -19,40 +18,46 @@ st.set_page_config(
 )
 
 # --- USER AUTHENTICATION SETUP ---
-# Convert st.secrets credentials to a deep mutable dictionary to prevent read-only errors
-try:
-    if hasattr(st.secrets['credentials'], 'to_dict'):
-        credentials_dict = st.secrets['credentials'].to_dict()
-    else:
-        credentials_dict = copy.deepcopy(dict(st.secrets['credentials']))
+# Predefined valid platform users
+USER_CREDENTIALS = {
+    "odeborah": {"password": "SecurePass2026", "name": "Oyinkan Deborah"},
+    "jsmith": {"password": "Password123", "name": "John Smith"}
+}
 
-    cookie_name = st.secrets['cookie']['name']
-    cookie_key = st.secrets['cookie']['key']
-    cookie_expiry = int(st.secrets['cookie']['expiry_days'])
-except Exception as e:
-    st.error(f"Error loading secrets configuration: {e}")
-    st.stop()
+# Session state initialization for login status
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = None
+if "name" not in st.session_state:
+    st.session_state["name"] = None
+if "username" not in st.session_state:
+    st.session_state["username"] = None
 
-authenticator = stauth.Authenticate(
-    credentials=credentials_dict,
-    cookie_name=cookie_name,
-    key=cookie_key,
-    cookie_expiry_days=cookie_expiry
-)
+# Render login form if user is not authenticated
+if not st.session_state["authentication_status"]:
+    st.title("🔑 Bioplastic AI Platform Login")
+    with st.form("login_form"):
+        input_user = st.text_input("Username").strip()
+        input_pass = st.text_input("Password", type="password").strip()
+        submit = st.form_submit_button("Login")
 
-# Render login component (v0.3.x safe: no tuple unpacking)
-authenticator.login(location='main')
+    if submit:
+        if input_user in USER_CREDENTIALS and USER_CREDENTIALS[input_user]["password"] == input_pass:
+            st.session_state["authentication_status"] = True
+            st.session_state["name"] = USER_CREDENTIALS[input_user]["name"]
+            st.session_state["username"] = input_user
+            st.rerun()
+        else:
+            st.session_state["authentication_status"] = False
 
-# Read state directly from session_state
 authentication_status = st.session_state.get("authentication_status")
 name = st.session_state.get("name")
 username = st.session_state.get("username")
 
 if authentication_status == False:
-    st.error('Username/password is incorrect.')
+    st.error("Username or password is incorrect.")
     st.stop()
-elif authentication_status == None:
-    st.warning('Please log in with your credentials to access team dashboards.')
+elif authentication_status is None:
+    st.warning("Please log in with your credentials to access team dashboards.")
     st.stop()
 
 # --- DATABASE CONNECTION (SUPABASE POSTGRESQL TRANSACTION POOLER) ---
@@ -73,7 +78,7 @@ Base = declarative_base()
 class ExportLog(Base):
     __tablename__ = 'export_logs'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String)  # Isolates saved project logs by user
+    user_id = Column(String)  # Tracks owner of the saved run
     project_name = Column(String, default="Unnamed Project")
     timestamp = Column(DateTime, default=datetime.utcnow)
     tensile_strength = Column(Float)
@@ -120,7 +125,6 @@ def train_surrogate_model():
     sorbitol = np.random.uniform(2, 15, n_samples)
     water = 100 - (agar + starch + glycerin + sorbitol)
     
-    # Physical property targets
     tensile = 12.0 + 0.8 * agar + 0.5 * starch - 0.6 * glycerin - 0.4 * sorbitol + np.random.normal(0, 1.5, n_samples)
     elastic = 150.0 + 12.0 * agar + 8.0 * starch - 10.0 * glycerin - 6.0 * sorbitol + np.random.normal(0, 15, n_samples)
     water_abs = 40.0 - 0.5 * agar - 0.2 * starch + 1.2 * glycerin + 0.8 * sorbitol + np.random.normal(0, 2.0, n_samples)
@@ -163,7 +167,11 @@ def generate_pdf_report(user_name, project_name, recipe, tensile, elastic, water
 
 # --- SIDEBAR UI ---
 st.sidebar.title(f"Welcome, {name} 👋")
-authenticator.logout(location='sidebar')
+if st.sidebar.button("Logout"):
+    st.session_state["authentication_status"] = None
+    st.session_state["name"] = None
+    st.session_state["username"] = None
+    st.rerun()
 
 st.sidebar.header("🧪 Formulation Inputs (% w/w)")
 project_name = st.sidebar.text_input("Project / Batch Name", "EcoFilm-Batch-A")
