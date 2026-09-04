@@ -1,139 +1,346 @@
-import re
-import requests
+import io
+import datetime
+import numpy as np
+import pandas as pd
 import streamlit as st
-import hashlib
-import secrets
-import string
+import plotly.graph_objects as go
+from scipy.optimize import minimize
+from sklearn.ensemble import RandomForestRegressor
 
-# --- HELPER FUNCTIONS ---
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+# ReportLab imports for PDF Spec Sheet Generation
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
-def generate_random_password(length=12) -> str:
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
+# ==========================================
+# 1. PAGE CONFIG & SESSION STATE SETUP
+# ==========================================
+st.set_page_config(
+    page_title="BioMatX AI - Circular Economy Platform",
+    page_icon="🧪",
+    layout="wide"
+)
 
-def send_password_email(user_email, generated_password):
-    """Sends password via Resend API (or replace with SendGrid/SMTP)"""
-    api_key = st.secrets.get("email", {}).get("resend_api_key")
-    sender = st.secrets.get("email", {}).get("sender_email", "noreply@bioplastic.ai")
+# Initialize Session State Variables
+if "user_plan" not in st.session_state:
+    st.session_state["user_plan"] = "free"  # 'free', 'researcher', 'enterprise'
+
+if "daily_predictions" not in st.session_state:
+    st.session_state["daily_predictions"] = 0
+
+if "last_prediction_date" not in st.session_state:
+    st.session_state["last_prediction_date"] = datetime.date.today()
+
+# Daily Quota Reset Logic (Resets at Midnight WAT)
+today = datetime.date.today()
+if st.session_state["last_prediction_date"] < today:
+    st.session_state["daily_predictions"] = 0
+    st.session_state["last_prediction_date"] = today
+
+
+# ==========================================
+# 2. ML MODEL & OPTIMIZER ENGINES
+# ==========================================
+@st.cache_resource
+def train_baseline_model():
+    """Trains a baseline multi-output regressor on synthetic biopolymer physics data."""
+    np.random.seed(42)
+    N = 1000
     
-    if not api_key:
-        st.warning(f"DEV MODE: Email API key missing. Generated password for {user_email}: {generated_password}")
-        return True
+    # Features: [Glycerin %, Water %, Citric Acid %, Chitosan %]
+    glycerin = np.random.uniform(5, 40, N)
+    water = np.random.uniform(10, 50, N)
+    citric_acid = np.random.uniform(0.5, 5.0, N)
+    chitosan = np.random.uniform(0.0, 3.0, N)
+    
+    X = np.column_stack([glycerin, water, citric_acid, chitosan])
+    
+    # Simulated Physics Equations
+    tensile = 50.0 - (glycerin * 0.9) - (water * 0.4) + (citric_acid * 2.5) + (chitosan * 3.1) + np.random.normal(0, 1, N)
+    elasticity = 2.0 + (glycerin * 2.2) + (water * 0.3) - (citric_acid * 0.8) + np.random.normal(0, 1, N)
+    water_abs = 15.0 + (water * 0.8) - (glycerin * 0.1) - (citric_acid * 1.5) - (chitosan * 2.0) + np.random.normal(0, 1, N)
+    
+    y = np.column_stack([
+        np.clip(tensile, 1.0, 100.0),
+        np.clip(elasticity, 1.0, 150.0),
+        np.clip(water_abs, 1.0, 90.0)
+    ])
+    
+    model = RandomForestRegressor(n_estimators=50, random_state=42)
+    model.fit(X, y)
+    return model
 
-    url = "https://api.resend.com/emails"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {
-        "from": sender,
-        "to": user_email,
-        "subject": "Your Bioplastic AI Platform Access Credentials",
-        "html": f"""
-        <h3>Welcome to Bioplastic AI Platform</h3>
-        <p>Your account has been created. Use the temporary password below to log in:</p>
-        <p><b>Password:</b> <code>{generated_password}</code></p>
-        <p>Please log in and update your settings.</p>
-        """
+model = train_baseline_model()
+
+def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
+    """Calculates required additive ratios based on target mechanical properties."""
+    def objective(x):
+        preds = model.predict([x])[0]
+        # Weighted Squared Error
+        err = (preds[0] - target_tensile)**2 + (preds[1] - target_elasticity)**2 + (preds[2] - target_water_abs)**2
+        return err
+
+    # Bounds: Glycerin (5-40%), Water (10-50%), Citric Acid (0.5-5%), Chitosan (0-3%)
+    bounds = [(5, 40), (10, 50), (0.5, 5.0), (0.0, 3.0)]
+    initial_guess = [20.0, 30.0, 2.0, 1.0]
+    
+    res = minimize(objective, initial_guess, method='L-BFGS-B', bounds=bounds)
+    opt_ratios = res.x
+    predicted_outputs = model.predict([opt_ratios])[0]
+    
+    return {
+        "glycerin": round(opt_ratios[0], 2),
+        "water": round(opt_ratios[1], 2),
+        "citric_acid": round(opt_ratios[2], 2),
+        "chitosan": round(opt_ratios[3], 2),
+        "achieved_tensile": round(predicted_outputs[0], 2),
+        "achieved_elasticity": round(predicted_outputs[1], 2),
+        "achieved_water_abs": round(predicted_outputs[2], 2)
     }
-    response = requests.post(url, json=payload, headers=headers)
-    return response.status_code in [200, 201]
 
-# --- LOGIN & SIGN-UP INTERFACE ---
-if not st.session_state.get("authentication_status"):
-    st.title("🌱 Cloud-Native Bioplastic AI Platform")
+
+# ==========================================
+# 3. PDF GENERATOR FUNCTION
+# ==========================================
+def generate_pdf_spec_sheet(data_dict):
+    """Generates a downloadable PDF Spec Sheet using ReportLab."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    story = []
     
-    auth_tab1, auth_tab2, auth_tab3 = st.tabs(["🔑 Sign In", "📝 Create Account", "💳 Pricing Packages"])
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor("#1b4332"))
+    subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Heading3'], fontSize=12, textColor=colors.HexColor("#2d6a4f"))
+    
+    # Header
+    story.append(Paragraph("BioMatX Intelligence - Technical Data Sheet (TDS)", title_style))
+    story.append(Paragraph(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S WAT')}", subtitle_style))
+    story.append(Spacer(1, 15))
+    
+    # Spec Table
+    table_data = [
+        ["Parameter", "Target Value", "Optimized / Predicted Output"],
+        ["Base Polymer", data_dict.get("base_polymer", "Cassava Starch"), data_dict.get("base_polymer", "Cassava Starch")],
+        ["Tensile Strength (MPa)", f"{data_dict.get('target_tensile', 'N/A')}", f"{data_dict.get('achieved_tensile')} MPa"],
+        ["Elasticity / Elongation (%)", f"{data_dict.get('target_elasticity', 'N/A')}", f"{data_dict.get('achieved_elasticity')} %"],
+        ["Water Absorption 24hr (%)", f"{data_dict.get('target_water', 'N/A')}", f"{data_dict.get('achieved_water')} %"],
+        ["Glycerin Plasticizer Ratio", "-", f"{data_dict.get('glycerin')}%"],
+        ["Water Content", "-", f"{data_dict.get('water')}%"],
+        ["Citric Acid Cross-linker", "-", f"{data_dict.get('citric_acid')}%"],
+        ["Chitosan Additive", "-", f"{data_dict.get('chitosan')}%"]
+    ]
+    
+    t = Table(table_data, colWidths=[200, 150, 180])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2d6a4f")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 8),
+        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor("#f8f9fa")),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor("#d3d3d3")),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Physical lab verification recommended before production.</i>", styles['Italic']))
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
-    with auth_tab1:
-        with st.form("login_form"):
-            input_user = st.text_input("Username or Email").strip().lower()
-            input_pass = st.text_input("Password", type="password").strip()
-            submit_login = st.form_submit_button("Sign In")
 
-        if submit_login:
-            session = Session()
-            user_rec = session.query(User).filter(
-                (User.username == input_user) | (User.email == input_user)
-            ).first()
-            session.close()
+# ==========================================
+# 4. SIDEBAR - PROFILE & PLAN SWITCHER
+# ==========================================
+st.sidebar.title("🌿 BioMatX Platform")
+st.sidebar.markdown(f"**Current Plan:** `{st.session_state['user_plan'].upper()}`")
 
-            if user_rec and user_rec.password_hash == hash_password(input_pass):
-                st.session_state["authentication_status"] = True
-                st.session_state["name"] = user_rec.full_name
-                st.session_state["username"] = user_rec.username
-                st.session_state["role"] = user_rec.role
-                st.session_state["plan"] = user_rec.subscription_plan
-                st.success("Log in successful!")
-                st.rerun()
-            else:
-                st.error("Invalid username/email or password.")
+# Quota Tracker
+if st.session_state["user_plan"] == "free":
+    quota_left = max(0, 3 - st.session_state["daily_predictions"])
+    st.sidebar.progress((3 - quota_left) / 3)
+    st.sidebar.caption(f"Daily Free Quota Remaining: **{quota_left} / 3 predictions**")
+    if quota_left == 0:
+        st.sidebar.error("⚠️ Daily quota exhausted. Upgrade to unlock unlimited runs.")
+else:
+    st.sidebar.success("⚡ Unlimited Premium Access Active")
 
-    with auth_tab2:
-        st.subheader("Register for an Account")
-        st.write("Your generated login password will be delivered directly to your email address.")
-        
-        with st.form("signup_form"):
-            new_name = st.text_input("Full Name")
-            new_user = st.text_input("Desired Username").strip().lower()
-            new_email = st.text_input("Work Email Address").strip().lower()
-            selected_plan = st.selectbox("Choose Plan Tiers", ["Free Tier", "Researcher ($49/mo)", "Enterprise ($199/mo)"])
-            submit_signup = st.form_submit_button("Generate Password & Register")
+st.sidebar.markdown("---")
+st.sidebar.subheader("Plan Testing Switcher")
+plan_choice = st.sidebar.radio("Simulate User Tier:", ["Free ($0/mo)", "Researcher ($12/mo)", "Enterprise ($38.99/mo)"])
+if plan_choice.startswith("Free"):
+    st.session_state["user_plan"] = "free"
+elif plan_choice.startswith("Researcher"):
+    st.session_state["user_plan"] = "researcher"
+else:
+    st.session_state["user_plan"] = "enterprise"
 
-        if submit_signup:
-            if not new_name or not new_user or not new_email:
-                st.error("Please fill in all fields.")
-            elif not re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
-                st.error("Please enter a valid email address.")
-            else:
-                session = Session()
-                existing_user = session.query(User).filter((User.username == new_user) | (User.email == new_email)).first()
+
+# ==========================================
+# 5. MAIN APP INTERFACE & TABS
+# ==========================================
+st.title("🧪 AI Bioplastic Formulation & Optimization Engine")
+st.caption("Predict mechanical properties, optimize raw material input ratios, and generate specification sheets.")
+
+tab1, tab2, tab3 = st.tabs(["🔮 Predictive Modeler", "🎯 Inverse Recipe Optimizer", "📊 Interactive 3D Surfaces"])
+
+
+# ------------------------------------------
+# TAB 1: PREDICTIVE MODELER
+# ------------------------------------------
+with tab1:
+    st.header("1. Forward Mechanical Property Predictor")
+    st.markdown("Adjust input raw material ratios to calculate predicted physical outputs.")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        base_mat = st.selectbox("Base Biopolymer", ["Cassava Starch", "Sugarcane Bagasse", "Corn Starch", "Palm Kernel Ash Composite"])
+    with c2:
+        gly_in = st.slider("Glycerin Plasticizer (%)", 5.0, 40.0, 20.0)
+    with c3:
+        wat_in = st.slider("Water Content (%)", 10.0, 50.0, 30.0)
+    with c4:
+        cit_in = st.slider("Citric Acid Crosslinker (%)", 0.5, 5.0, 2.0)
+    
+    chitos_in = st.slider("Chitosan Additive (%)", 0.0, 3.0, 1.0)
+
+    if st.button("Run Forward Prediction", type="primary"):
+        # Check Daily Quota for Free Users
+        if st.session_state["user_plan"] == "free" and st.session_state["daily_predictions"] >= 3:
+            st.error("🚫 Daily free prediction limit reached (3/3). Please upgrade to the Researcher plan ($12/mo) to continue.")
+        else:
+            st.session_state["daily_predictions"] += 1
+            
+            # Perform Prediction
+            preds = model.predict([[gly_in, wat_in, cit_in, chitos_in]])[0]
+            tensile, elasticity, water_abs = round(preds[0], 2), round(preds[1], 2), round(preds[2], 2)
+            
+            st.markdown("---")
+            st.subheader("Predicted Mechanical Properties")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Tensile Strength", f"{tensile} MPa")
+            m2.metric("Elasticity (Elongation)", f"{elasticity} %")
+            m3.metric("Water Absorption (24h)", f"{water_abs} %")
+            
+            st.markdown("---")
+            st.subheader("Additive Ratios & Formulation Spec")
+            
+            # CONVERSION TRIGGER (TEASE & BLOCK)
+            if st.session_state["user_plan"] == "free":
+                st.warning("🔒 Exact cross-linker optimization and commercial spec downloads are locked on the Free Tier.")
                 
-                if existing_user:
-                    st.error("Username or email is already registered.")
-                    session.close()
-                else:
-                    gen_pass = generate_random_password()
-                    plan_clean = selected_plan.split(" ")[0]
-                    
-                    new_user_rec = User(
-                        username=new_user,
-                        email=new_email,
-                        full_name=new_name,
-                        password_hash=hash_password(gen_pass),
-                        subscription_plan=plan_clean,
-                        is_verified=True
-                    )
-                    session.add(new_user_rec)
-                    session.commit()
-                    session.close()
+                # Blurred Mockup CSS
+                st.markdown(
+                    """
+                    <div style="background-color: #212529; color: #f8f9fa; padding: 20px; border-radius: 10px; filter: blur(5px); opacity: 0.5; user-select: none;">
+                        <p><strong>Optimized Curing Temperature:</strong> 87.5°C</p>
+                        <p><strong>Recommended Mixing Shear Rate:</strong> 450 RPM</p>
+                        <p><strong>Exact Polymer-to-Plasticizer Ratio:</strong> 1 : 0.34</p>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+                
+                st.info("💡 **Upgrade to Researcher ($12/mo)** to unlock exact formulation metrics and PDF TDS downloads.")
+            else:
+                st.success("✅ Full Technical Specification Unlocked")
+                spec_data = {
+                    "base_polymer": base_mat,
+                    "target_tensile": f"{tensile} MPa",
+                    "target_elasticity": f"{elasticity} %",
+                    "target_water": f"{water_abs} %",
+                    "achieved_tensile": tensile,
+                    "achieved_elasticity": elasticity,
+                    "achieved_water": water_abs,
+                    "glycerin": gly_in,
+                    "water": wat_in,
+                    "citric_acid": cit_in,
+                    "chitosan": chitos_in
+                }
+                st.json(spec_data)
+                
+                # PDF Download Button
+                pdf_bytes = generate_pdf_spec_sheet(spec_data)
+                st.download_button(
+                    label="📄 Download Technical Data Sheet (PDF)",
+                    data=pdf_bytes,
+                    file_name=f"BioMatX_Spec_{base_mat.replace(' ', '_')}.pdf",
+                    mime="application/pdf"
+                )
 
-                    if send_password_email(new_email, gen_pass):
-                        st.success(f"Account created! Check **{new_email}** for your generated password.")
-                    else:
-                        st.error("Failed to deliver password email. Please contact platform support.")
 
-    with auth_tab3:
-        st.subheader("Platform Pricing Packages")
-        col_free, col_pro, col_ent = st.columns(3)
+# ------------------------------------------
+# TAB 2: INVERSE RECIPE OPTIMIZER
+# ------------------------------------------
+with tab2:
+    st.header("2. Inverse Recipe Optimizer")
+    st.markdown("Input your target mechanical performance requirements, and the AI will calculate the exact required material formulation.")
+    
+    if st.session_state["user_plan"] == "free":
+        st.warning("🔒 **Inverse Recipe Optimization is a Paid Feature.** Upgrade to Researcher ($12/mo) or Enterprise ($38.99/mo) to use this tool.")
+        st.image("https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80", caption="Lock in target properties to output precise chemical ratios.")
+    else:
+        col_t1, col_t2, col_t3 = st.columns(3)
+        with col_t1:
+            target_t = st.number_input("Target Tensile Strength (MPa)", 5.0, 80.0, 35.0)
+        with col_t2:
+            target_e = st.number_input("Target Elasticity (%)", 10.0, 120.0, 45.0)
+        with col_t3:
+            target_w = st.number_input("Target Max Water Abs. (%)", 5.0, 60.0, 20.0)
+            
+        if st.button("Calculate Optimized Recipe", type="primary"):
+            results = run_inverse_optimizer(target_t, target_e, target_w)
+            
+            st.success("🎯 Optimal Formulation Found!")
+            
+            res_c1, res_c2 = st.columns(2)
+            with res_c1:
+                st.subheader("Required Input Ingredients")
+                st.write(f"• **Glycerin Plasticizer:** {results['glycerin']}%")
+                st.write(f"• **Water Content:** {results['water']}%")
+                st.write(f"• **Citric Acid Cross-linker:** {results['citric_acid']}%")
+                st.write(f"• **Chitosan Additive:** {results['chitosan']}%")
+            
+            with res_c2:
+                st.subheader("Predicted Output Match")
+                st.write(f"• **Tensile Achieved:** {results['achieved_tensile']} MPa (Target: {target_t})")
+                st.write(f"• **Elasticity Achieved:** {results['achieved_elasticity']}% (Target: {target_e})")
+                st.write(f"• **Water Abs. Achieved:** {results['achieved_water_abs']}% (Target: {target_w})")
 
-        with col_free:
-            st.markdown("### Free")
-            st.markdown("**$0** / month")
-            st.write("• Basic ML predictions\n• 5 saved formulations/mo\n• Standard support")
-            st.button("Current Default", disabled=True, key="btn_free")
 
-        with col_pro:
-            st.markdown("### Researcher")
-            st.markdown("**$49** / month")
-            st.write("• Inverse Optimizer\n• Unlimited saved formulations\n• PDF technical exports")
-            if st.button("Subscribe to Researcher", key="btn_pro"):
-                st.info("Directing to Stripe payment gateway...")
-
-        with col_ent:
-            st.markdown("### Enterprise")
-            st.markdown("**$199** / month")
-            st.write("• Team-wide log visibility\n• Custom ingredient pricing\n• Dedicated priority support")
-            if st.button("Subscribe to Enterprise", key="btn_ent"):
-                st.info("Directing to Stripe payment gateway...")
-
-    st.stop()
+# ------------------------------------------
+# TAB 3: INTERACTIVE 3D SURFACES
+# ------------------------------------------
+with tab3:
+    st.header("3. Polymer Interaction Surfaces")
+    st.markdown("Explore 3D interaction dynamics between Plasticizers (Glycerin) and Water Content on Tensile Strength.")
+    
+    # Generate Meshgrid for Surface Plot
+    g_range = np.linspace(5, 40, 30)
+    w_range = np.linspace(10, 50, 30)
+    G, W = np.meshgrid(g_range, w_range)
+    
+    # Static values for citric acid and chitosan
+    C_static = 2.0
+    Ch_static = 1.0
+    
+    # Flatten grid for model prediction
+    grid_inputs = np.column_stack([G.ravel(), W.ravel(), np.full(G.size, C_static), np.full(G.size, Ch_static)])
+    grid_preds = model.predict(grid_inputs)
+    Z_tensile = grid_preds[:, 0].reshape(G.shape)
+    
+    # Plotly 3D Surface Figure
+    fig = go.Figure(data=[go.Surface(z=Z_tensile, x=G, y=W, colorscale='Viridis')])
+    fig.update_layout(
+        title="3D Tensile Strength Surface (MPa)",
+        scene=dict(
+            xaxis_title="Glycerin (%)",
+            yaxis_title="Water Content (%)",
+            zaxis_title="Tensile Strength (MPa)"
+        ),
+        autosize=True,
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
