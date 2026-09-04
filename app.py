@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,7 +12,7 @@ from fpdf import FPDF
 
 st.set_page_config(page_title="Bioplastics AI Platform", layout="wide")
 
-# --- DATABASE SETUP ---
+# --- DATABASE SETUP (SUPABASE POSTGRESQL + LOCAL SQLITE FALLBACK) ---
 Base = declarative_base()
 
 class Formulation(Base):
@@ -47,7 +48,17 @@ class ExportLog(Base):
     water_percent = Column(Float)
     est_cost_per_kg = Column(Float, default=0.0)
 
-engine = create_engine('sqlite:///bioplastics.db')
+# Connect to Supabase Postgres via Secrets, or fallback to SQLite locally
+if "postgres" in st.secrets:
+    DB_URL = st.secrets["postgres"]["url"]
+    # Fix potential URL string prefix issues from older Supabase connection strings
+    if DB_URL.startswith("postgres://"):
+        DB_URL = DB_URL.replace("postgres://", "postgresql://", 1)
+    engine = create_engine(DB_URL, pool_size=5, max_overflow=10, pool_pre_ping=True)
+else:
+    DB_URL = os.getenv("DATABASE_URL", "sqlite:///bioplastics.db")
+    engine = create_engine(DB_URL)
+
 Base.metadata.create_all(engine)
 
 def upgrade_db_schema():
@@ -58,9 +69,9 @@ def upgrade_db_schema():
                 conn.commit()
             except Exception:
                 pass
-        for col in [('project_name', "VARCHAR DEFAULT 'Unnamed Project'"), ('est_cost_per_kg', 'FLOAT DEFAULT 0.0')]:
+        for col_name, col_type in [('project_name', "VARCHAR(255) DEFAULT 'Unnamed Project'"), ('est_cost_per_kg', 'FLOAT DEFAULT 0.0')]:
             try:
-                conn.execute(text(f"ALTER TABLE export_logs ADD COLUMN {col[0]} {col[1]};"))
+                conn.execute(text(f"ALTER TABLE export_logs ADD COLUMN {col_name} {col_type};"))
                 conn.commit()
             except Exception:
                 pass
@@ -434,7 +445,7 @@ with col2:
         on_click=log_recipe_export,
         args=(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg)
     ):
-        st.success(f"Report for '{project_code}' downloaded!")
+        st.success(f"Report for '{project_code}' downloaded and logged to database!")
 
 # --- MULTI-VARIABLE SENSITIVITY ANALYSIS & TABS ---
 st.markdown("---")
