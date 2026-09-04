@@ -19,6 +19,7 @@ st.set_page_config(
 )
 
 # --- USER AUTHENTICATION SETUP ---
+# Convert st.secrets credentials to a deep mutable dictionary to prevent read-only errors
 try:
     if hasattr(st.secrets['credentials'], 'to_dict'):
         credentials_dict = st.secrets['credentials'].to_dict()
@@ -39,9 +40,10 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=cookie_expiry
 )
 
-# Render login component (stauth v0.3.x compatibility)
+# Render login component (v0.3.x safe: no tuple unpacking)
 authenticator.login(location='main')
 
+# Read state directly from session_state
 authentication_status = st.session_state.get("authentication_status")
 name = st.session_state.get("name")
 username = st.session_state.get("username")
@@ -53,7 +55,7 @@ elif authentication_status == None:
     st.warning('Please log in with your credentials to access team dashboards.')
     st.stop()
 
-# --- DATABASE CONNECTION (SUPABASE POSTGRESQL) ---
+# --- DATABASE CONNECTION (SUPABASE POSTGRESQL TRANSACTION POOLER) ---
 @st.cache_resource
 def init_db():
     try:
@@ -71,7 +73,7 @@ Base = declarative_base()
 class ExportLog(Base):
     __tablename__ = 'export_logs'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String)  # Tracks owner of the dashboard entry
+    user_id = Column(String)  # Isolates saved project logs by user
     project_name = Column(String, default="Unnamed Project")
     timestamp = Column(DateTime, default=datetime.utcnow)
     tensile_strength = Column(Float)
@@ -106,7 +108,7 @@ def log_recipe_export(user_id, project_name, tensile, elastic, water_abs, recipe
     session.commit()
     session.close()
 
-# --- TRAIN ML MODEL (MLPRegressor) ---
+# --- TRAIN ML SURROGATE MODEL (MLPRegressor) ---
 @st.cache_resource
 def train_surrogate_model():
     np.random.seed(42)
@@ -118,7 +120,7 @@ def train_surrogate_model():
     sorbitol = np.random.uniform(2, 15, n_samples)
     water = 100 - (agar + starch + glycerin + sorbitol)
     
-    # Target physical properties
+    # Physical property targets
     tensile = 12.0 + 0.8 * agar + 0.5 * starch - 0.6 * glycerin - 0.4 * sorbitol + np.random.normal(0, 1.5, n_samples)
     elastic = 150.0 + 12.0 * agar + 8.0 * starch - 10.0 * glycerin - 6.0 * sorbitol + np.random.normal(0, 15, n_samples)
     water_abs = 40.0 - 0.5 * agar - 0.2 * starch + 1.2 * glycerin + 0.8 * sorbitol + np.random.normal(0, 2.0, n_samples)
@@ -132,7 +134,7 @@ def train_surrogate_model():
 
 model = train_surrogate_model()
 
-# --- PDF GENERATOR ---
+# --- PDF REPORT GENERATOR ---
 def generate_pdf_report(user_name, project_name, recipe, tensile, elastic, water_abs, cost_per_kg):
     pdf = FPDF()
     pdf.add_page()
@@ -191,7 +193,6 @@ input_array = np.array([[agar, starch, glycerin, sorbitol, water]])
 preds = model.predict(input_array)[0]
 tensile_pred, elastic_pred, water_abs_pred = preds[0], preds[1], preds[2]
 
-# Standard raw material cost parameters
 costs = {"Agar": 18.0, "Starch": 1.5, "Glycerin": 2.5, "Sorbitol": 3.0, "Water / Solvent": 0.05}
 est_cost_per_kg = sum((recipe[k] / 100.0) * costs[k] for k in recipe)
 
@@ -232,7 +233,6 @@ with tab3:
     
     col_dl, col_save = st.columns(2)
     
-    # Export PDF Report
     pdf_bytes = generate_pdf_report(name, project_name, recipe, tensile_pred, elastic_pred, water_abs_pred, est_cost_per_kg)
     col_dl.download_button(
         label="📄 Export PDF Technical Report",
@@ -241,14 +241,12 @@ with tab3:
         mime="application/pdf"
     )
     
-    # Save to database
     if col_save.button("💾 Save Current Batch to Supabase"):
         log_recipe_export(username, project_name, tensile_pred, elastic_pred, water_abs_pred, recipe, est_cost_per_kg)
         st.success("Successfully logged batch data to Supabase PostgreSQL!")
     
     st.markdown("---")
     
-    # Retrieve user-specific records from Supabase
     session = Session()
     user_logs = session.query(ExportLog).filter(ExportLog.user_id == username).order_by(ExportLog.timestamp.desc()).all()
     session.close()
