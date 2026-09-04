@@ -1,3 +1,4 @@
+import copy
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,17 +19,28 @@ st.set_page_config(
 )
 
 # --- USER AUTHENTICATION SETUP ---
-# Convert immutable st.secrets into a mutable dict to allow session writes
-credentials = dict(st.secrets['credentials'])
+# Deep copy st.secrets credentials to allow internal dict modifications by stauth
+try:
+    if hasattr(st.secrets['credentials'], 'to_dict'):
+        credentials_dict = st.secrets['credentials'].to_dict()
+    else:
+        credentials_dict = copy.deepcopy(dict(st.secrets['credentials']))
+
+    cookie_name = st.secrets['cookie']['name']
+    cookie_key = st.secrets['cookie']['key']
+    cookie_expiry = int(st.secrets['cookie']['expiry_days'])
+except Exception as e:
+    st.error(f"Error loading secrets configuration: {e}")
+    st.stop()
 
 authenticator = stauth.Authenticate(
-    credentials,
-    st.secrets['cookie']['name'],
-    st.secrets['cookie']['key'],
-    st.secrets['cookie']['expiry_days']
+    credentials=credentials_dict,
+    cookie_name=cookie_name,
+    key=cookie_key,
+    cookie_expiry_days=cookie_expiry
 )
 
-# Render login component in main body
+# Render login component
 name, authentication_status, username = authenticator.login('main', fields={'Form name': 'Bioplastic AI Platform Login'})
 
 if authentication_status == False:
