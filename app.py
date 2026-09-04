@@ -18,14 +18,17 @@ st.set_page_config(
 )
 
 # --- USER AUTHENTICATION SETUP ---
+# Convert immutable st.secrets into a mutable dict to allow session writes
+credentials = dict(st.secrets['credentials'])
+
 authenticator = stauth.Authenticate(
-    st.secrets['credentials'],
+    credentials,
     st.secrets['cookie']['name'],
     st.secrets['cookie']['key'],
     st.secrets['cookie']['expiry_days']
 )
 
-# Render login component in sidebar or main body
+# Render login component in main body
 name, authentication_status, username = authenticator.login('main', fields={'Form name': 'Bioplastic AI Platform Login'})
 
 if authentication_status == False:
@@ -196,7 +199,6 @@ with tab1:
 
 with tab2:
     st.subheader("3D Optimization & Property Trade-Offs")
-    # Generate synthetic response surface around current formulation point
     grid_a = np.linspace(5, 30, 15)
     grid_g = np.linspace(5, 25, 15)
     GA, GG = np.meshgrid(grid_a, grid_g)
