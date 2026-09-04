@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import plotly.express as px
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, text
@@ -165,7 +166,7 @@ def create_pdf_report(project_name, tensile, elastic, water_abs, recipe, cost_pe
 
 # --- APP LAYOUT ---
 st.title("🌱 Bioplastics AI Formulation Platform")
-st.write("Adjust target properties to generate optimal chemical formulation ratios and cost projections.")
+st.write("Adjust target properties to generate optimal chemical formulation ratios, cost projections, and sensitivity analysis.")
 
 # Sidebar for Raw Material Unit Pricing Configuration
 st.sidebar.header("💵 Raw Material Unit Costs ($/kg)")
@@ -196,7 +197,7 @@ with col2:
     sorb_pct = max(0.0, float(pred_actual[3]))
     solvent_pct = max(0.0, 100.0 - (agar_pct + starch_pct + gly_pct + sorb_pct))
     
-    # Calculate estimated cost per kg
+    # Cost calculation
     est_cost_per_kg = (
         (agar_pct / 100.0) * cost_agar +
         (starch_pct / 100.0) * cost_starch +
@@ -236,6 +237,63 @@ with col2:
         args=(project_code, tensile, elastic, water_abs, recipe_dict, est_cost_per_kg)
     ):
         st.success(f"Report for '{project_code}' downloaded and logged with cost analysis!")
+
+# --- PLOTLY INTERACTIVE SENSITIVITY CHART ---
+st.markdown("---")
+st.subheader("📈 Tensile Strength vs. Cost Sensitivity Analysis")
+
+# Generate range of tensile strength values (10 to 50 MPa)
+tensile_range = np.linspace(10.0, 50.0, 40)
+chart_data = []
+
+for t_val in tensile_range:
+    X_sample = x_scaler.transform([[t_val, elastic, water_abs]])
+    pred_sample_scaled = model.predict(X_sample)
+    pred_sample = y_scaler.inverse_transform(pred_sample_scaled)[0]
+    
+    a_pct = max(0.0, float(pred_sample[0]))
+    s_pct = max(0.0, float(pred_sample[1]))
+    g_pct = max(0.0, float(pred_sample[2]))
+    sob_pct = max(0.0, float(pred_sample[3]))
+    sol_pct = max(0.0, 100.0 - (a_pct + s_pct + g_pct + sob_pct))
+    
+    c_kg = (
+        (a_pct / 100.0) * cost_agar +
+        (s_pct / 100.0) * cost_starch +
+        (g_pct / 100.0) * cost_glycerin +
+        (sob_pct / 100.0) * cost_sorbitol +
+        (sol_pct / 100.0) * cost_water
+    )
+    
+    chart_data.append({
+        "Tensile Strength (MPa)": round(t_val, 2),
+        "Estimated Cost ($/kg)": round(c_kg, 2),
+        "Agar Ratio (%)": round(a_pct, 2)
+    })
+
+df_chart = pd.DataFrame(chart_data)
+
+# Render Plotly Line Chart
+fig = px.line(
+    df_chart, 
+    x="Tensile Strength (MPa)", 
+    y="Estimated Cost ($/kg)", 
+    hover_data=["Agar Ratio (%)"],
+    title="Estimated Batch Cost ($/kg) vs Target Tensile Strength (MPa)",
+    markers=True
+)
+
+# Add highlight dot for current slider selection
+fig.add_scatter(
+    x=[tensile],
+    y=[est_cost_per_kg],
+    mode="markers",
+    marker=dict(size=14, color="red"),
+    name="Current Target"
+)
+
+fig.update_layout(template="plotly_white")
+st.plotly_chart(fig, use_container_width=True)
 
 # --- HISTORICAL LOGS DISPLAY ---
 with st.expander("📊 View Export History Log"):
