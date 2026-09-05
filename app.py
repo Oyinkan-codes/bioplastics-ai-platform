@@ -20,7 +20,7 @@ from reportlab.lib import colors
 
 
 # ==========================================
-# 1. PAGE CONFIGURATION & SETUP
+# 1. PAGE CONFIGURATION & INITIALIZATION
 # ==========================================
 st.set_page_config(
     page_title="BioMatX AI - Circular Economy Platform",
@@ -36,12 +36,12 @@ def init_supabase() -> Client:
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception as e:
-        st.error(f"Supabase Connection Error: Configure secrets.toml. ({e})")
+        st.error(f"Supabase Connection Alert: Operating in offline/fallback mode. ({e})")
         return None
 
 supabase = init_supabase()
 
-# Session State Initialization
+# Session State Setup
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
@@ -54,7 +54,7 @@ if "daily_predictions" not in st.session_state:
 if "last_prediction_date" not in st.session_state:
     st.session_state["last_prediction_date"] = datetime.date.today()
 
-# Reset daily counter at midnight
+# Reset daily quota counter at midnight
 today = datetime.date.today()
 if st.session_state["last_prediction_date"] < today:
     st.session_state["daily_predictions"] = 0
@@ -62,7 +62,7 @@ if st.session_state["last_prediction_date"] < today:
 
 
 # ==========================================
-# 2. ML ENGINE & INVERSE OPTIMIZER
+# 2. MACHINE LEARNING ENGINE & INVERSE OPTIMIZER
 # ==========================================
 MODEL_PATH = "models/bioplastic_rf_v1.pkl"
 
@@ -116,18 +116,18 @@ def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
     predicted_outputs = model.predict([opt_ratios])[0]
     
     return {
-        "glycerin": round(opt_ratios[0], 2),
-        "water": round(opt_ratios[1], 2),
-        "citric_acid": round(opt_ratios[2], 2),
-        "chitosan": round(opt_ratios[3], 2),
-        "achieved_tensile": round(predicted_outputs[0], 2),
-        "achieved_elasticity": round(predicted_outputs[1], 2),
-        "achieved_water_abs": round(predicted_outputs[2], 2)
+        "glycerin": round(float(opt_ratios[0]), 2),
+        "water": round(float(opt_ratios[1]), 2),
+        "citric_acid": round(float(opt_ratios[2]), 2),
+        "chitosan": round(float(opt_ratios[3]), 2),
+        "achieved_tensile": round(float(predicted_outputs[0]), 2),
+        "achieved_elasticity": round(float(predicted_outputs[1]), 2),
+        "achieved_water_abs": round(float(predicted_outputs[2]), 2)
     }
 
 
 # ==========================================
-# 3. PDF GENERATOR FUNCTION
+# 3. PDF GENERATOR
 # ==========================================
 def generate_pdf_spec_sheet(data_dict):
     buffer = io.BytesIO()
@@ -139,7 +139,7 @@ def generate_pdf_spec_sheet(data_dict):
     subtitle_style = ParagraphStyle('SubTitleStyle', parent=styles['Heading3'], fontSize=12, textColor=colors.HexColor("#2d6a4f"))
     
     story.append(Paragraph("BioMatX Intelligence - Technical Data Sheet (TDS)", title_style))
-    story.append(Paragraph(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S WAT')}", subtitle_style))
+    story.append(Paragraph(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", subtitle_style))
     story.append(Spacer(1, 15))
     
     table_data = [
@@ -166,7 +166,7 @@ def generate_pdf_spec_sheet(data_dict):
     ]))
     story.append(t)
     story.append(Spacer(1, 20))
-    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Physical lab verification recommended before production.</i>", styles['Italic']))
+    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Physical lab verification is recommended before mass scaling.</i>", styles['Italic']))
     
     doc.build(story)
     buffer.seek(0)
@@ -174,7 +174,7 @@ def generate_pdf_spec_sheet(data_dict):
 
 
 # ==========================================
-# 4. SIDEBAR - AUTH & PROFILE MANAGEMENT
+# 4. SIDEBAR - AUTHENTICATION & PROFILES
 # ==========================================
 st.sidebar.title("🌿 BioMatX Platform")
 
@@ -192,6 +192,11 @@ if not st.session_state["user"]:
                     st.sidebar.success("Account created! Check your email to confirm.")
                 except Exception as e:
                     st.sidebar.error(f"Sign Up Error: {e}")
+            else:
+                # Demo Fallback
+                st.session_state["user"] = {"email": email}
+                st.session_state["user_plan"] = "free"
+                st.rerun()
     else:
         if st.sidebar.button("Sign In", type="primary"):
             if supabase:
@@ -199,7 +204,6 @@ if not st.session_state["user"]:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                     st.session_state["user"] = res.user
                     
-                    # Fetch Profile & Plan Tier
                     profile = supabase.table("profiles").select("*").eq("id", res.user.id).execute()
                     if profile.data:
                         st.session_state["user_plan"] = profile.data[0].get("plan_tier", "free")
@@ -207,8 +211,14 @@ if not st.session_state["user"]:
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Login Failed: {e}")
+            else:
+                # Demo Fallback
+                st.session_state["user"] = {"email": email}
+                st.session_state["user_plan"] = "free"
+                st.rerun()
 else:
-    st.sidebar.write(f"Logged in as: **{st.session_state['user'].email}**")
+    user_email = getattr(st.session_state['user'], 'email', st.session_state['user'].get('email', 'User'))
+    st.sidebar.write(f"Logged in as: **{user_email}**")
     st.sidebar.markdown(f"**Plan Tier:** `{st.session_state['user_plan'].upper()}`")
     
     if st.session_state["user_plan"] == "free":
@@ -220,7 +230,10 @@ else:
 
     if st.sidebar.button("Log Out"):
         if supabase:
-            supabase.auth.sign_out()
+            try:
+                supabase.auth.sign_out()
+            except Exception:
+                pass
         st.session_state["user"] = None
         st.session_state["user_plan"] = "free"
         st.rerun()
@@ -268,7 +281,8 @@ def render_landing_page():
         st.write("• Unlimited Property Predictions")
         st.write("• Inverse Recipe Optimizer")
         st.write("• Downloadable PDF TDS Spec Sheets")
-        st.link_button("Subscribe - $12/mo", st.secrets.get("PAYSTACK_RESEARCHER_URL", "https://paystack.com"))
+        pay_url_r = st.secrets.get("PAYSTACK_RESEARCHER_URL", "https://paystack.com")
+        st.link_button("Subscribe - $12/mo", pay_url_r)
         
     with p3:
         st.subheader("Enterprise Plan")
@@ -276,7 +290,8 @@ def render_landing_page():
         st.write("• All Researcher Features")
         st.write("• Batch Recipe History Logs")
         st.write("• API Access for Packaging Plants")
-        st.link_button("Subscribe - $38.99/mo", st.secrets.get("PAYSTACK_ENTERPRISE_URL", "https://paystack.com"))
+        pay_url_e = st.secrets.get("PAYSTACK_ENTERPRISE_URL", "https://paystack.com")
+        st.link_button("Subscribe - $38.99/mo", pay_url_e)
 
     st.markdown("---")
     st.caption("© 2026 BioMatX Intelligence UK Ltd. Aligning with UN SDGs 9, 12, 13, 14 & 15. | [Privacy Policy](#) | [Terms of Service](#)")
@@ -286,8 +301,9 @@ def render_landing_page():
 # 6. DASHBOARD (AUTHENTICATED USER VIEW)
 # ==========================================
 def render_dashboard():
+    user_email = getattr(st.session_state['user'], 'email', st.session_state['user'].get('email', 'User'))
     st.title("🧪 AI Bioplastic Formulation & Optimization Engine")
-    st.caption(f"Welcome back, **{st.session_state['user'].email}** | Plan: `{st.session_state['user_plan'].upper()}`")
+    st.caption(f"Welcome back, **{user_email}** | Plan: `{st.session_state['user_plan'].upper()}`")
 
     tab1, tab2, tab3, tab4 = st.tabs(["🔮 Predictive Modeler", "🎯 Inverse Recipe Optimizer", "📊 Interactive 3D Surfaces", "💳 Upgrade Plan"])
 
@@ -316,14 +332,14 @@ def render_dashboard():
             else:
                 if st.session_state["user_plan"] == "free":
                     st.session_state["daily_predictions"] += 1
-                    if supabase and st.session_state["user"]:
+                    if supabase and hasattr(st.session_state["user"], "id"):
                         try:
                             supabase.table("profiles").update({"daily_prediction_count": st.session_state["daily_predictions"]}).eq("id", st.session_state["user"].id).execute()
                         except Exception:
                             pass
                 
                 preds = model.predict([[gly_in, wat_in, cit_in, chitos_in]])[0]
-                tensile, elasticity, water_abs = round(preds[0], 2), round(preds[1], 2), round(preds[2], 2)
+                tensile, elasticity, water_abs = round(float(preds[0]), 2), round(float(preds[1]), 2), round(float(preds[2]), 2)
                 
                 st.markdown("---")
                 st.subheader("Predicted Mechanical Properties")
@@ -335,7 +351,6 @@ def render_dashboard():
                 st.markdown("---")
                 st.subheader("Additive Ratios & Formulation Spec")
                 
-                # CONVERSION TRIGGER (TEASE & BLOCK)
                 if st.session_state["user_plan"] == "free":
                     st.warning("🔒 Exact cross-linker optimization and commercial spec downloads are locked on the Free Tier.")
                     
@@ -447,17 +462,19 @@ def render_dashboard():
             st.write("• Unlimited Property Predictions")
             st.write("• Inverse Recipe Optimizer")
             st.write("• Downloadable Technical Data Sheets")
-            st.link_button("Upgrade to Researcher", st.secrets.get("PAYSTACK_RESEARCHER_URL", "https://paystack.com"))
+            pay_url_r = st.secrets.get("PAYSTACK_RESEARCHER_URL", "https://paystack.com")
+            st.link_button("Upgrade to Researcher", pay_url_r)
             
         with up2:
             st.subheader("Enterprise Plan ($38.99/mo)")
             st.write("• Batch Recipe History")
             st.write("• Dedicated Lab Support & API Integration")
-            st.link_button("Upgrade to Enterprise", st.secrets.get("PAYSTACK_ENTERPRISE_URL", "https://paystack.com"))
+            pay_url_e = st.secrets.get("PAYSTACK_ENTERPRISE_URL", "https://paystack.com")
+            st.link_button("Upgrade to Enterprise", pay_url_e)
 
 
 # ==========================================
-# 7. MAIN ROUTING CONTROLLER
+# 7. ROUTING CONTROLLER
 # ==========================================
 if st.session_state["user"] is None:
     render_landing_page()
