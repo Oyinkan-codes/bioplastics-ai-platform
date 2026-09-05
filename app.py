@@ -20,7 +20,7 @@ from reportlab.lib import colors
 
 
 # ==========================================
-# 1. PAGE CONFIGURATION & SETUP
+# 1. PAGE CONFIGURATION & INITIALIZATION
 # ==========================================
 st.set_page_config(
     page_title="BioMatX AI - Circular Economy Platform",
@@ -28,20 +28,22 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Supabase Client
+# Initialize Supabase Client dynamically from Streamlit Secrets
 @st.cache_resource
 def init_supabase() -> Client:
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_KEY", "")
+        if url and key:
+            return create_client(url, key)
+        return None
     except Exception as e:
-        st.error(f"Supabase Connection Alert: Operating in fallback mode. ({e})")
+        st.warning(f"Operating in fallback/local mode. Supabase credentials missing or invalid: {e}")
         return None
 
 supabase = init_supabase()
 
-# Session State Initialization
+# Session State Setup
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
@@ -54,7 +56,7 @@ if "daily_predictions" not in st.session_state:
 if "last_prediction_date" not in st.session_state:
     st.session_state["last_prediction_date"] = datetime.date.today()
 
-# Reset daily quota counter at midnight
+# Daily quota reset check
 today = datetime.date.today()
 if st.session_state["last_prediction_date"] < today:
     st.session_state["daily_predictions"] = 0
@@ -64,16 +66,19 @@ if st.session_state["last_prediction_date"] < today:
 # ==========================================
 # 2. MACHINE LEARNING ENGINE & INVERSE OPTIMIZER
 # ==========================================
-MODEL_PATH = "models/bioplastic_rf_v1.pkl"
+MODEL_DIR = "models"
+MODEL_PATH = os.path.join(MODEL_DIR, "bioplastic_rf_v1.pkl")
 
 @st.cache_resource
 def load_or_train_model():
+    """Loads existing trained RandomForest model or generates baseline dataset and trains a new model."""
     if os.path.exists(MODEL_PATH):
         try:
             return joblib.load(MODEL_PATH)
         except Exception:
             pass
 
+    # Synthetic Dataset Generation for Bioplastic Properties
     np.random.seed(42)
     N = 1000
     
@@ -84,8 +89,12 @@ def load_or_train_model():
     
     X = np.column_stack([glycerin, water, citric_acid, chitosan])
     
+    # Synthetic physical relationships:
+    # Tensile Strength decreases with glycerin/water, increases with citric acid/chitosan
     tensile = 50.0 - (glycerin * 0.9) - (water * 0.4) + (citric_acid * 2.5) + (chitosan * 3.1) + np.random.normal(0, 1, N)
+    # Elasticity increases with glycerin/water, decreases with crosslinkers
     elasticity = 2.0 + (glycerin * 2.2) + (water * 0.3) - (citric_acid * 0.8) + np.random.normal(0, 1, N)
+    # Water absorption increases with water, decreases with crosslinkers/chitosan
     water_abs = 15.0 + (water * 0.8) - (glycerin * 0.1) - (citric_acid * 1.5) - (chitosan * 2.0) + np.random.normal(0, 1, N)
     
     y = np.column_stack([
@@ -97,18 +106,19 @@ def load_or_train_model():
     model = RandomForestRegressor(n_estimators=50, random_state=42)
     model.fit(X, y)
     
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    os.makedirs(MODEL_DIR, exist_ok=True)
     joblib.dump(model, MODEL_PATH)
     return model
 
 model = load_or_train_model()
 
 def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
+    """Calculates formulation ratios given target material specs using L-BFGS-B bounded optimization."""
     def objective(x):
         preds = model.predict([x])[0]
         return (preds[0] - target_tensile)**2 + (preds[1] - target_elasticity)**2 + (preds[2] - target_water_abs)**2
 
-    bounds = [(5, 40), (10, 50), (0.5, 5.0), (0.0, 3.0)]
+    bounds = [(5.0, 40.0), (10.0, 50.0), (0.5, 5.0), (0.0, 3.0)]
     initial_guess = [20.0, 30.0, 2.0, 1.0]
     
     res = minimize(objective, initial_guess, method='L-BFGS-B', bounds=bounds)
@@ -127,9 +137,10 @@ def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
 
 
 # ==========================================
-# 3. PDF SPEC SHEET GENERATOR
+# 3. PDF TECHNICAL DATA SHEET (TDS) GENERATOR
 # ==========================================
 def generate_pdf_spec_sheet(data_dict):
+    """Generates an in-memory PDF Technical Data Sheet using ReportLab."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
@@ -143,7 +154,7 @@ def generate_pdf_spec_sheet(data_dict):
     story.append(Spacer(1, 15))
     
     table_data = [
-        ["Parameter", "Target Value", "Optimized / Predicted Output"],
+        ["Parameter", "Target Specification", "Predicted / Optimized Value"],
         ["Base Polymer", data_dict.get("base_polymer", "Cassava Starch"), data_dict.get("base_polymer", "Cassava Starch")],
         ["Tensile Strength (MPa)", f"{data_dict.get('target_tensile', 'N/A')}", f"{data_dict.get('achieved_tensile')} MPa"],
         ["Elasticity / Elongation (%)", f"{data_dict.get('target_elasticity', 'N/A')}", f"{data_dict.get('achieved_elasticity')} %"],
@@ -166,7 +177,7 @@ def generate_pdf_spec_sheet(data_dict):
     ]))
     story.append(t)
     story.append(Spacer(1, 20))
-    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Physical lab verification is recommended before mass production.</i>", styles['Italic']))
+    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Lab verification is recommended prior to industrial scale production.</i>", styles['Italic']))
     
     doc.build(story)
     buffer.seek(0)
@@ -174,12 +185,12 @@ def generate_pdf_spec_sheet(data_dict):
 
 
 # ==========================================
-# 4. SIDEBAR - AUTHENTICATION & PROFILES
+# 4. SIDEBAR - AUTHENTICATION & USER CONTROLS
 # ==========================================
 st.sidebar.title("🌿 BioMatX Platform")
 
 if not st.session_state["user"]:
-    st.sidebar.subheader("🔐 Sign In to Launch Dashboard")
+    st.sidebar.subheader("🔐 Sign In / Access Dashboard")
     auth_mode = st.sidebar.radio("Account Action", ["Login", "Sign Up"])
     email = st.sidebar.text_input("Email")
     password = st.sidebar.text_input("Password", type="password")
@@ -247,7 +258,7 @@ def render_landing_page():
     st.markdown("# 🧪 Predict Bioplastic Formulations in Seconds")
     st.subheader("Accelerating Sustainable Materials Science with DeepTech Machine Learning")
     
-    st.info("👋 Welcome! Sign in or create a free account using the sidebar to access the live prediction engine.")
+    st.info("👋 Sign in or create a free account using the sidebar to access the live prediction engine.")
     
     st.markdown("---")
     c1, c2 = st.columns(2)
@@ -293,7 +304,7 @@ def render_landing_page():
         st.markdown("### $38.99 / £31.00 / ₦50,000 /mo")
         st.write("• All Researcher Features")
         st.write("• Batch Recipe History Logs")
-        st.write("• API Access for Packaging Plants")
+        st.write("• Dedicated API Integration")
         
         ce_usd, ce_gbp, ce_ngn = st.columns(3)
         with ce_usd:
@@ -304,7 +315,7 @@ def render_landing_page():
             st.link_button("Pay ₦50,000", st.secrets.get("RAENEST_ENTERPRISE_NGN_URL", "https://raenest.com"))
 
     st.markdown("---")
-    st.caption("© 2026 BioMatX Intelligence UK Ltd. Aligning with UN SDGs 9, 12, 13, 14 & 15. | [Privacy Policy](#) | [Terms of Service](#)")
+    st.caption("© BioMatX Intelligence UK Ltd. Aligning with UN SDGs 9, 12, 13, 14 & 15.")
 
 
 # ==========================================
@@ -315,11 +326,14 @@ def render_dashboard():
     st.title("🧪 AI Bioplastic Formulation & Optimization Engine")
     st.caption(f"Welcome back, **{user_email}** | Plan: `{st.session_state['user_plan'].upper()}`")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🔮 Predictive Modeler", "🎯 Inverse Recipe Optimizer", "📊 Interactive 3D Surfaces", "💳 Upgrade Plan"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🔮 Predictive Modeler", 
+        "🎯 Inverse Recipe Optimizer", 
+        "📊 Interactive 3D Surfaces", 
+        "💳 Upgrade Plan"
+    ])
 
-    # ------------------------------------------
     # TAB 1: PREDICTIVE MODELER
-    # ------------------------------------------
     with tab1:
         st.header("1. Forward Mechanical Property Predictor")
         st.markdown("Adjust input raw material ratios to calculate predicted physical outputs.")
@@ -363,18 +377,7 @@ def render_dashboard():
                 
                 if st.session_state["user_plan"] == "free":
                     st.warning("🔒 Exact cross-linker optimization and commercial spec downloads are locked on the Free Tier.")
-                    
-                    st.markdown(
-                        """
-                        <div style="background-color: #212529; color: #f8f9fa; padding: 20px; border-radius: 10px; filter: blur(5px); opacity: 0.5; user-select: none;">
-                            <p><strong>Optimized Curing Temperature:</strong> 87.5°C</p>
-                            <p><strong>Recommended Mixing Shear Rate:</strong> 450 RPM</p>
-                            <p><strong>Exact Polymer-to-Plasticizer Ratio:</strong> 1 : 0.34</p>
-                        </div>
-                        """, 
-                        unsafe_allow_html=True
-                    )
-                    st.info("💡 **Upgrade to Researcher ($12/mo)** to unlock exact formulation metrics and PDF TDS downloads.")
+                    st.info("💡 Upgrade to **Researcher ($12/mo)** to unlock exact formulation metrics and PDF TDS downloads.")
                 else:
                     st.success("✅ Full Technical Specification Unlocked")
                     spec_data = {
@@ -400,9 +403,7 @@ def render_dashboard():
                         mime="application/pdf"
                     )
 
-    # ------------------------------------------
     # TAB 2: INVERSE RECIPE OPTIMIZER
-    # ------------------------------------------
     with tab2:
         st.header("2. Inverse Recipe Optimizer")
         st.markdown("Input target mechanical performance requirements, and the AI will calculate the required formulation.")
@@ -436,9 +437,7 @@ def render_dashboard():
                     st.write(f"• **Elasticity Achieved:** {results['achieved_elasticity']}% (Target: {target_e})")
                     st.write(f"• **Water Abs. Achieved:** {results['achieved_water_abs']}% (Target: {target_w})")
 
-    # ------------------------------------------
     # TAB 3: INTERACTIVE 3D SURFACES
-    # ------------------------------------------
     with tab3:
         st.header("3. Polymer Interaction Surfaces")
         
@@ -459,9 +458,7 @@ def render_dashboard():
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ------------------------------------------
     # TAB 4: UPGRADE & PAYMENTS
-    # ------------------------------------------
     with tab4:
         st.header("💳 Upgrade Subscription Tier (Raenest Multi-Currency)")
         st.write(f"Current Active Tier: **{st.session_state['user_plan'].upper()}**")
@@ -498,7 +495,7 @@ def render_dashboard():
 
 
 # ==========================================
-# 7. ROUTING CONTROLLER
+# 7. MAIN ROUTER
 # ==========================================
 if st.session_state["user"] is None:
     render_landing_page()
