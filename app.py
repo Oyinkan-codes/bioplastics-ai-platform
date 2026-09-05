@@ -20,7 +20,7 @@ from reportlab.lib import colors
 
 
 # ==========================================
-# 1. PAGE CONFIGURATION & INITIALIZATION
+# 1. PAGE CONFIGURATION & SETUP
 # ==========================================
 st.set_page_config(
     page_title="BioMatX AI - Circular Economy Platform",
@@ -36,12 +36,12 @@ def init_supabase() -> Client:
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception as e:
-        st.error(f"Supabase Connection Alert: Operating in offline/fallback mode. ({e})")
+        st.error(f"Supabase Connection Alert: Operating in fallback mode. ({e})")
         return None
 
 supabase = init_supabase()
 
-# Session State Setup
+# Session State Initialization
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
@@ -127,7 +127,7 @@ def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
 
 
 # ==========================================
-# 3. PDF GENERATOR
+# 3. PDF SPEC SHEET GENERATOR
 # ==========================================
 def generate_pdf_spec_sheet(data_dict):
     buffer = io.BytesIO()
@@ -166,7 +166,7 @@ def generate_pdf_spec_sheet(data_dict):
     ]))
     story.append(t)
     story.append(Spacer(1, 20))
-    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Physical lab verification is recommended before mass scaling.</i>", styles['Italic']))
+    story.append(Paragraph("<i>Disclaimer: Formulations are generated via predictive machine learning models. Physical lab verification is recommended before mass production.</i>", styles['Italic']))
     
     doc.build(story)
     buffer.seek(0)
@@ -193,7 +193,6 @@ if not st.session_state["user"]:
                 except Exception as e:
                     st.sidebar.error(f"Sign Up Error: {e}")
             else:
-                # Demo Fallback
                 st.session_state["user"] = {"email": email}
                 st.session_state["user_plan"] = "free"
                 st.rerun()
@@ -212,7 +211,6 @@ if not st.session_state["user"]:
                 except Exception as e:
                     st.sidebar.error(f"Login Failed: {e}")
             else:
-                # Demo Fallback
                 st.session_state["user"] = {"email": email}
                 st.session_state["user_plan"] = "free"
                 st.rerun()
@@ -265,7 +263,7 @@ def render_landing_page():
         st.write("• Exportable Technical Data Sheets (TDS)")
 
     st.markdown("---")
-    st.header("💳 Transparent Pricing Plans")
+    st.header("💳 Flexible Multi-Currency Pricing (Raenest)")
     p1, p2, p3 = st.columns(3)
     
     with p1:
@@ -277,21 +275,33 @@ def render_landing_page():
         
     with p2:
         st.subheader("Researcher Plan")
-        st.markdown("### $12 / month (₦15,000)")
+        st.markdown("### $12 / £9.50 / ₦15,000 /mo")
         st.write("• Unlimited Property Predictions")
         st.write("• Inverse Recipe Optimizer")
         st.write("• Downloadable PDF TDS Spec Sheets")
-        pay_url_r = st.secrets.get("PAYSTACK_RESEARCHER_URL", "https://paystack.com")
-        st.link_button("Subscribe - $12/mo", pay_url_r)
+        
+        c_usd, c_gbp, c_ngn = st.columns(3)
+        with c_usd:
+            st.link_button("Pay $12", st.secrets.get("RAENEST_RESEARCHER_USD_URL", "https://raenest.com"))
+        with c_gbp:
+            st.link_button("Pay £9.50", st.secrets.get("RAENEST_RESEARCHER_GBP_URL", "https://raenest.com"))
+        with c_ngn:
+            st.link_button("Pay ₦15,000", st.secrets.get("RAENEST_RESEARCHER_NGN_URL", "https://raenest.com"))
         
     with p3:
         st.subheader("Enterprise Plan")
-        st.markdown("### $38.99 / month")
+        st.markdown("### $38.99 / £31.00 / ₦50,000 /mo")
         st.write("• All Researcher Features")
         st.write("• Batch Recipe History Logs")
         st.write("• API Access for Packaging Plants")
-        pay_url_e = st.secrets.get("PAYSTACK_ENTERPRISE_URL", "https://paystack.com")
-        st.link_button("Subscribe - $38.99/mo", pay_url_e)
+        
+        ce_usd, ce_gbp, ce_ngn = st.columns(3)
+        with ce_usd:
+            st.link_button("Pay $38.99", st.secrets.get("RAENEST_ENTERPRISE_USD_URL", "https://raenest.com"))
+        with ce_gbp:
+            st.link_button("Pay £31.00", st.secrets.get("RAENEST_ENTERPRISE_GBP_URL", "https://raenest.com"))
+        with ce_ngn:
+            st.link_button("Pay ₦50,000", st.secrets.get("RAENEST_ENTERPRISE_NGN_URL", "https://raenest.com"))
 
     st.markdown("---")
     st.caption("© 2026 BioMatX Intelligence UK Ltd. Aligning with UN SDGs 9, 12, 13, 14 & 15. | [Privacy Policy](#) | [Terms of Service](#)")
@@ -398,7 +408,7 @@ def render_dashboard():
         st.markdown("Input target mechanical performance requirements, and the AI will calculate the required formulation.")
         
         if st.session_state["user_plan"] == "free":
-            st.warning("🔒 **Inverse Recipe Optimization is a Paid Feature.** Upgrade to Researcher ($12/mo) or Enterprise ($38.99/mo) to unlock.")
+            st.warning("🔒 **Inverse Recipe Optimization is a Paid Feature.** Upgrade to Researcher or Enterprise to unlock.")
         else:
             col_t1, col_t2, col_t3 = st.columns(3)
             with col_t1:
@@ -453,24 +463,38 @@ def render_dashboard():
     # TAB 4: UPGRADE & PAYMENTS
     # ------------------------------------------
     with tab4:
-        st.header("💳 Upgrade Subscription Tier")
+        st.header("💳 Upgrade Subscription Tier (Raenest Multi-Currency)")
         st.write(f"Current Active Tier: **{st.session_state['user_plan'].upper()}**")
         
         up1, up2 = st.columns(2)
         with up1:
-            st.subheader("Researcher Plan ($12/mo)")
+            st.subheader("Researcher Plan")
+            st.markdown("### $12 / £9.50 / ₦15,000 / mo")
             st.write("• Unlimited Property Predictions")
             st.write("• Inverse Recipe Optimizer")
             st.write("• Downloadable Technical Data Sheets")
-            pay_url_r = st.secrets.get("PAYSTACK_RESEARCHER_URL", "https://paystack.com")
-            st.link_button("Upgrade to Researcher", pay_url_r)
+            
+            c_u1, c_u2, c_u3 = st.columns(3)
+            with c_u1:
+                st.link_button("USD ($12)", st.secrets.get("RAENEST_RESEARCHER_USD_URL", "https://raenest.com"))
+            with c_u2:
+                st.link_button("GBP (£9.50)", st.secrets.get("RAENEST_RESEARCHER_GBP_URL", "https://raenest.com"))
+            with c_u3:
+                st.link_button("NGN (₦15k)", st.secrets.get("RAENEST_RESEARCHER_NGN_URL", "https://raenest.com"))
             
         with up2:
-            st.subheader("Enterprise Plan ($38.99/mo)")
+            st.subheader("Enterprise Plan")
+            st.markdown("### $38.99 / £31.00 / ₦50,000 / mo")
             st.write("• Batch Recipe History")
             st.write("• Dedicated Lab Support & API Integration")
-            pay_url_e = st.secrets.get("PAYSTACK_ENTERPRISE_URL", "https://paystack.com")
-            st.link_button("Upgrade to Enterprise", pay_url_e)
+            
+            ce_u1, ce_u2, ce_u3 = st.columns(3)
+            with ce_u1:
+                st.link_button("USD ($38.99)", st.secrets.get("RAENEST_ENTERPRISE_USD_URL", "https://raenest.com"))
+            with ce_u2:
+                st.link_button("GBP (£31.00)", st.secrets.get("RAENEST_ENTERPRISE_GBP_URL", "https://raenest.com"))
+            with ce_u3:
+                st.link_button("NGN (₦50k)", st.secrets.get("RAENEST_ENTERPRISE_NGN_URL", "https://raenest.com"))
 
 
 # ==========================================
