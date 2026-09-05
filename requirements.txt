@@ -6,3 +6,4 @@ plotly
 reportlab
 scipy
 joblib
+supabase==2.3.0
