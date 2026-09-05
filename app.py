@@ -1,3 +1,4 @@
+import os
 import io
 import datetime
 import numpy as np
@@ -6,6 +7,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.optimize import minimize
 from sklearn.ensemble import RandomForestRegressor
+import joblib
 
 # ReportLab imports for PDF Spec Sheet Generation
 from reportlab.lib.pagesizes import letter
@@ -24,7 +26,7 @@ st.set_page_config(
 
 # Initialize Session State Variables
 if "user_plan" not in st.session_state:
-    st.session_state["user_plan"] = "free"  # 'free', 'researcher', 'enterprise'
+    st.session_state["user_plan"] = "free"  # Options: 'free', 'researcher', 'enterprise'
 
 if "daily_predictions" not in st.session_state:
     st.session_state["daily_predictions"] = 0
@@ -40,11 +42,24 @@ if st.session_state["last_prediction_date"] < today:
 
 
 # ==========================================
-# 2. ML MODEL & OPTIMIZER ENGINES
+# 2. ML MODEL LOADING & OPTIMIZER ENGINES
 # ==========================================
+MODEL_PATH = "models/bioplastic_rf_v1.pkl"
+
 @st.cache_resource
-def train_baseline_model():
-    """Trains a baseline multi-output regressor on synthetic biopolymer physics data."""
+def load_or_train_model():
+    """
+    Checks if a saved model exists on disk.
+    If yes, loads it via joblib. If no, trains a baseline model and saves it.
+    """
+    if os.path.exists(MODEL_PATH):
+        try:
+            model = joblib.load(MODEL_PATH)
+            return model
+        except Exception:
+            pass  # Fall back to training if loading fails
+
+    # Synthetic baseline training data fallback
     np.random.seed(42)
     N = 1000
     
@@ -56,7 +71,7 @@ def train_baseline_model():
     
     X = np.column_stack([glycerin, water, citric_acid, chitosan])
     
-    # Simulated Physics Equations
+    # Physics relationship simulation
     tensile = 50.0 - (glycerin * 0.9) - (water * 0.4) + (citric_acid * 2.5) + (chitosan * 3.1) + np.random.normal(0, 1, N)
     elasticity = 2.0 + (glycerin * 2.2) + (water * 0.3) - (citric_acid * 0.8) + np.random.normal(0, 1, N)
     water_abs = 15.0 + (water * 0.8) - (glycerin * 0.1) - (citric_acid * 1.5) - (chitosan * 2.0) + np.random.normal(0, 1, N)
@@ -69,19 +84,22 @@ def train_baseline_model():
     
     model = RandomForestRegressor(n_estimators=50, random_state=42)
     model.fit(X, y)
+    
+    # Save model locally for persistence
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    joblib.dump(model, MODEL_PATH)
+    
     return model
 
-model = train_baseline_model()
+model = load_or_train_model()
 
 def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
     """Calculates required additive ratios based on target mechanical properties."""
     def objective(x):
         preds = model.predict([x])[0]
-        # Weighted Squared Error
         err = (preds[0] - target_tensile)**2 + (preds[1] - target_elasticity)**2 + (preds[2] - target_water_abs)**2
         return err
 
-    # Bounds: Glycerin (5-40%), Water (10-50%), Citric Acid (0.5-5%), Chitosan (0-3%)
     bounds = [(5, 40), (10, 50), (0.5, 5.0), (0.0, 3.0)]
     initial_guess = [20.0, 30.0, 2.0, 1.0]
     
@@ -101,7 +119,7 @@ def run_inverse_optimizer(target_tensile, target_elasticity, target_water_abs):
 
 
 # ==========================================
-# 3. PDF GENERATOR FUNCTION
+# 3. PDF SPEC SHEET GENERATOR
 # ==========================================
 def generate_pdf_spec_sheet(data_dict):
     """Generates a downloadable PDF Spec Sheet using ReportLab."""
@@ -151,7 +169,7 @@ def generate_pdf_spec_sheet(data_dict):
 
 
 # ==========================================
-# 4. SIDEBAR - PROFILE & PLAN SWITCHER
+# 4. SIDEBAR - USER PLAN & QUOTA CONTROLLER
 # ==========================================
 st.sidebar.title("🌿 BioMatX Platform")
 st.sidebar.markdown(f"**Current Plan:** `{st.session_state['user_plan'].upper()}`")
@@ -167,8 +185,8 @@ else:
     st.sidebar.success("⚡ Unlimited Premium Access Active")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Plan Testing Switcher")
-plan_choice = st.sidebar.radio("Simulate User Tier:", ["Free ($0/mo)", "Researcher ($12/mo)", "Enterprise ($38.99/mo)"])
+st.sidebar.subheader("Simulate Account Tier:")
+plan_choice = st.sidebar.radio("Active Tier:", ["Free ($0/mo)", "Researcher ($12/mo)", "Enterprise ($38.99/mo)"])
 if plan_choice.startswith("Free"):
     st.session_state["user_plan"] = "free"
 elif plan_choice.startswith("Researcher"):
@@ -178,7 +196,7 @@ else:
 
 
 # ==========================================
-# 5. MAIN APP INTERFACE & TABS
+# 5. MAIN APPLICATION TABS
 # ==========================================
 st.title("🧪 AI Bioplastic Formulation & Optimization Engine")
 st.caption("Predict mechanical properties, optimize raw material input ratios, and generate specification sheets.")
@@ -210,7 +228,8 @@ with tab1:
         if st.session_state["user_plan"] == "free" and st.session_state["daily_predictions"] >= 3:
             st.error("🚫 Daily free prediction limit reached (3/3). Please upgrade to the Researcher plan ($12/mo) to continue.")
         else:
-            st.session_state["daily_predictions"] += 1
+            if st.session_state["user_plan"] == "free":
+                st.session_state["daily_predictions"] += 1
             
             # Perform Prediction
             preds = model.predict([[gly_in, wat_in, cit_in, chitos_in]])[0]
