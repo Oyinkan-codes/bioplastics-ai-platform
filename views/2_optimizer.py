@@ -1,47 +1,45 @@
-import os
 import joblib
 import numpy as np
 import streamlit as st
 from scipy.optimize import minimize
 
-MODEL_PATH = "models/bioplastic_rf_v1.pkl"
+st.set_page_config(page_title="Inverse Recipe Optimizer", page_icon="🎯", layout="wide")
 
-@st.cache_resource
-def load_model():
-    if os.path.exists(MODEL_PATH):
-        return joblib.load(MODEL_PATH)
-    return None
-
-model = load_model()
-
-st.header("2. Inverse Recipe Optimizer")
+st.title("🎯 Inverse Recipe Optimizer")
+st.markdown("Set target physical performance attributes, and the solver will output the exact chemical ratios required.")
 
 user_plan = st.session_state.get("user_plan", "free")
 
 if user_plan == "free":
-    st.warning("🔒 **Inverse Recipe Optimization is a Paid Feature.** Upgrade to Researcher or Enterprise to unlock.")
-else:
-    col_t1, col_t2, col_t3 = st.columns(3)
-    with col_t1:
-        target_t = st.number_input("Target Tensile Strength (MPa)", 5.0, 80.0, 35.0)
-    with col_t2:
-        target_e = st.number_input("Target Elasticity (%)", 10.0, 120.0, 45.0)
-    with col_t3:
-        target_w = st.number_input("Target Max Water Abs. (%)", 5.0, 60.0, 20.0)
+    st.error("🔒 The Inverse Optimizer is a paid feature. Upgrade to the Researcher Plan ($12) or Enterprise Plan ($38.99) to unlock.")
+    st.stop()
 
-    if st.button("Calculate Optimized Recipe", type="primary"):
-        def objective(x):
-            preds = model.predict([x])[0]
-            return (preds[0] - target_t)**2 + (preds[1] - target_e)**2 + (preds[2] - target_w)**2
+col1, col2 = st.columns(2)
 
+with col1:
+    st.subheader("Target Material Properties")
+    target_tensile = st.number_input("Target Tensile Strength (MPa)", 10.0, 60.0, 35.0)
+    target_elasticity = st.number_input("Target Elongation (%)", 10.0, 100.0, 45.0)
+    target_water_abs = st.number_input("Target Water Absorption (%)", 5.0, 50.0, 20.0)
+
+model = joblib.load("models/bioplastic_rf_v1.pkl")
+
+def loss_function(weights):
+    pred = model.predict([weights])[0]
+    error = (pred[0] - target_tensile)**2 + (pred[1] - target_elasticity)**2 + (pred[2] - target_water_abs)**2
+    return error
+
+with col2:
+    st.subheader("Optimal Formulation Results")
+    if st.button("🚀 Run Optimization Solver", type="primary"):
         bounds = [(5.0, 40.0), (10.0, 50.0), (0.5, 5.0), (0.0, 3.0)]
         initial_guess = [20.0, 30.0, 2.0, 1.0]
-
-        res = minimize(objective, initial_guess, method='L-BFGS-B', bounds=bounds)
-        opt = res.x
-
-        st.success("🎯 Optimal Formulation Calculated!")
-        st.write(f"• **Glycerin Plasticizer:** {round(float(opt[0]), 2)}%")
-        st.write(f"• **Water Content:** {round(float(opt[1]), 2)}%")
-        st.write(f"• **Citric Acid Cross-linker:** {round(float(opt[2]), 2)}%")
-        st.write(f"• **Chitosan Additive:** {round(float(opt[3]), 2)}%")
+        
+        res = minimize(loss_function, initial_guess, method="L-BFGS-B", bounds=bounds)
+        opt_g, opt_w, opt_ca, opt_ch = res.x
+        
+        st.success("Formulation Successfully Optimized!")
+        st.write(f"• **Glycerin:** {opt_g:.2f} g")
+        st.write(f"• **Water Solvent:** {opt_w:.2f} g")
+        st.write(f"• **Citric Acid:** {opt_ca:.2f} g")
+        st.write(f"• **Chitosan:** {opt_ch:.2f} g")
