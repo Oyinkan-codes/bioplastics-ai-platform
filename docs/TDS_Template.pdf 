@@ -1,0 +1,43 @@
+import io
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+def generate_tds_pdf(feedstock, glycerin, water, citric_acid, chitosan, tensile, elasticity, water_abs):
+    """
+    Dynamically generates a commercial-grade Technical Data Sheet (TDS) PDF
+    and returns it as a byte stream for download.
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    
+    # Header Section
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(100, 730, "BioMatX AI - Technical Data Sheet (TDS)")
+    c.setFont("Helvetica", 10)
+    c.drawString(100, 715, f"Material Feedstock: {feedstock}")
+    c.line(100, 705, 500, 705)
+
+    # Formulation Ratios
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(100, 680, "Formulation Ratios (g):")
+    c.setFont("Helvetica", 10)
+    c.drawString(120, 660, f"• Glycerin (Plasticizer): {glycerin} g")
+    c.drawString(120, 645, f"• Water Solvent: {water} g")
+    c.drawString(120, 630, f"• Citric Acid (Cross-Linker): {citric_acid} g")
+    c.drawString(120, 615, f"• Chitosan (Reinforcement): {chitosan} g")
+
+    # Predicted Physical Properties
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(100, 580, "Predicted Physical Properties:")
+    c.setFont("Helvetica", 10)
+    c.drawString(120, 560, f"• Tensile Strength: {tensile:.2f} MPa")
+    c.drawString(120, 545, f"• Elongation at Break: {elasticity:.2f} %")
+    c.drawString(120, 530, f"• Water Absorption (24h): {water_abs:.2f} %")
+
+    # Footer & Visa Endorsement Proof
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(100, 480, "Generated via BioMatX DeepTech AI Platform for UK B2B Licensing & Compliance.")
+    
+    c.save()
+    buffer.seek(0)
+    return buffer
