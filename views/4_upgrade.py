@@ -1,27 +1,38 @@
 import streamlit as st
 
-st.header("💳 Upgrade Subscription Tier")
-st.write(f"Current Active Tier: **{st.session_state.get('user_plan', 'free').upper()}**")
+st.set_page_config(page_title="Upgrade Plan | BioMatX AI", page_icon="💳", layout="wide")
 
-up1, up2 = st.columns(2)
-with up1:
-    st.subheader("Researcher Plan")
-    st.markdown("### $12 / £9.50 / ₦15,000 / mo")
-    c_u1, c_u2, c_u3 = st.columns(3)
-    with c_u1:
-        st.link_button("USD ($12)", st.secrets.get("RAENEST_RESEARCHER_USD_URL", "https://raenest.com"))
-    with c_u2:
-        st.link_button("GBP (£9.50)", st.secrets.get("RAENEST_RESEARCHER_GBP_URL", "https://raenest.com"))
-    with c_u3:
-        st.link_button("NGN (₦15k)", st.secrets.get("RAENEST_RESEARCHER_NGN_URL", "https://raenest.com"))
+st.title("💳 Subscription Tiers & Formulation Licensing")
+st.markdown("Choose a plan to unlock advanced inverse optimization, high-barrier feedstock modeling, and commercial TDS exports.")
 
-with up2:
-    st.subheader("Enterprise Plan")
-    st.markdown("### $38.99 / £31.00 / ₦50,000 / mo")
-    ce_u1, ce_u2, ce_u3 = st.columns(3)
-    with ce_u1:
-        st.link_button("USD ($38.99)", st.secrets.get("RAENEST_ENTERPRISE_USD_URL", "https://raenest.com"))
-    with ce_u2:
-        st.link_button("GBP (£31.00)", st.secrets.get("RAENEST_ENTERPRISE_GBP_URL", "https://raenest.com"))
-    with ce_u3:
-        st.link_button("NGN (₦50k)", st.secrets.get("RAENEST_ENTERPRISE_NGN_URL", "https://raenest.com"))
+current_plan = st.session_state.get("user_plan", "free").lower()
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.container(border=True)
+    st.subheader("🌱 Free Tier")
+    st.markdown("### **$0** / month")
+    st.caption("Basic forward property predictions.")
+    st.markdown("• 5 Daily Forward Predictions\n• Standard Corn Starch Feedstock\n• Basic Community Access")
+    if current_plan == "free":
+        st.button("Current Active Plan", disabled=True, use_container_width=True)
+
+with col2:
+    st.container(border=True)
+    st.subheader("🔬 Researcher Plan")
+    st.markdown("### **$12** / month")
+    st.caption("For researchers and polymer engineers.")
+    st.markdown("• Unlimited Predictions\n• Agricultural Waste Feedstocks\n• Inverse Target Optimizer\n• TDS PDF Reports")
+    st.link_button("Upgrade to Researcher ($12)", "https://app.raenest.com/invoice/payment/RNMJ6E3RC", type="primary", use_container_width=True)
+
+with col3:
+    st.container(border=True)
+    st.subheader("🏢 Enterprise Plan")
+    st.markdown("### **$38.99** / month")
+    st.caption("For B2B packaging firms and visa endorsement proof.")
+    st.markdown("• Everything in Researcher Tier\n• B2B Asset-Light Licensing Rights\n• High-Barrier Specs (HDT, WVTR)\n• Automated LOI Generation")
+    st.link_button("Upgrade to Enterprise ($38.99)", "https://app.raenest.com/invoice/payment/RNM73C35S", type="primary", use_container_width=True)
+
+st.markdown("---")
+st.caption("Payments are processed via Raenest multi-currency checkout (USD, NGN, GBP, EUR).")
