@@ -1,33 +1,34 @@
-import os
 import joblib
 import numpy as np
-import streamlit as st
 import plotly.graph_objects as go
+import streamlit as st
 
-MODEL_PATH = "models/bioplastic_rf_v1.pkl"
+st.set_page_config(page_title="Interactive 3D Surfaces", page_icon="📊", layout="wide")
 
-@st.cache_resource
-def load_model():
-    if os.path.exists(MODEL_PATH):
-        return joblib.load(MODEL_PATH)
-    return None
+st.title("📊 3D Polymer Interaction Maps")
+st.markdown("Explore how varying plasticizers and solvent ratios continuously affect bioplastic strength.")
 
-model = load_model()
+model = joblib.load("models/bioplastic_rf_v1.pkl")
 
-st.header("3. Polymer Interaction Surfaces")
+g_range = np.linspace(5, 40, 20)
+w_range = np.linspace(10, 50, 20)
+G, W = np.meshgrid(g_range, w_range)
 
-if model:
-    g_range = np.linspace(5, 40, 30)
-    w_range = np.linspace(10, 50, 30)
-    G, W = np.meshgrid(g_range, w_range)
+Z = np.zeros(G.shape)
+for i in range(G.shape[0]):
+    for j in range(G.shape[1]):
+        X_test = np.array([[G[i, j], W[i, j], 2.0, 1.0]])
+        Z[i, j] = model.predict(X_test)[0][0]
 
-    grid_inputs = np.column_stack([G.ravel(), W.ravel(), np.full(G.size, 2.0), np.full(G.size, 1.0)])
-    grid_preds = model.predict(grid_inputs)
-    Z_tensile = grid_preds[:, 0].reshape(G.shape)
+fig = go.Figure(data=[go.Surface(z=Z, x=G, y=W, colorscale='Viridis')])
+fig.update_layout(
+    title='Tensile Strength (MPa) across Glycerin vs Water Ratios',
+    scene=dict(
+        xaxis_title='Glycerin (g)',
+        yaxis_title='Water (g)',
+        zaxis_title='Tensile Strength (MPa)'
+    ),
+    height=600
+)
 
-    fig = go.Figure(data=[go.Surface(z=Z_tensile, x=G, y=W, colorscale='Viridis')])
-    fig.update_layout(
-        title="3D Tensile Strength Surface (MPa)",
-        scene=dict(xaxis_title="Glycerin (%)", yaxis_title="Water Content (%)", zaxis_title="Tensile (MPa)")
-    )
-    st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True)
