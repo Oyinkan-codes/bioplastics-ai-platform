@@ -1,0 +1,15 @@
+record_id,feedstock_primary,feedstock_secondary,binder_plasticizer,filler_loading_wt_pct,property_tested,astm_iso_standard,measured_value,unit,value_range_low,value_range_high,elongation_pct,notes,citation_url
+LIT-001,Cassava Starch,None,Glycerin,0.0,tensile_strength,ASTM D638,1.80,MPa,0.88,2.71,14.0,Baseline unreinforced starch films,Literature Reference Benchmark
+LIT-002,Cassava Starch,Cellulose Fiber,Glycerin,10.0,tensile_strength,ASTM D638,4.30,MPa,1.57,7.03,,Fiber reinforcement study,Literature Reference Benchmark
+LIT-003,Cassava Starch,Microcrystalline Cellulose,Glycerin,5.0,tensile_strength,ASTM D638,11.18,MPa,3.21,11.18,,MCC loading study at 5 wt%,Literature Reference Benchmark
+LIT-004,Cassava Starch,Microcrystalline Cellulose,Glycerin,5.0,tensile_strength,ASTM D638,22.33,MPa,6.04,22.33,,High-efficiency MCC study at 5 wt%,Literature Reference Benchmark
+LIT-005,Cassava Starch,Natural Fiber,Glycerin,50.0,tensile_strength,ASTM D638,19.27,MPa,1.00,19.27,,High fiber loading study at 50 wt%,Literature Reference Benchmark
+LIT-006,Cassava Starch,Chitosan / PVA,Glycerin,0.0,tensile_strength,ASTM D638,23.56,MPa,10.00,23.56,85.0,Ternary chitosan/starch/PVA film (3:1:5 mass ratio),Literature Reference Benchmark
+LIT-007,Brewer Spent Grain,PVA,Glycerin,40.0,tensile_strength,ASTM D638,,MPa,,,BSG practical filling range (20-60 wt%),Literature Reference Benchmark
+LIT-008,Brewer Spent Grain,None,None,0.0,tensile_strength,ASTM D638,2.26,MPa,1.00,2.26,,Pure BSG-derived paper without polymer binder,Literature Reference Benchmark
+LIT-009,Palm Kernel Shell,Epoxy Composite,Alkali Treated,10.0,tensile_strength,ASTM D638,,MPa,,,Alkali-treated PKS improved strength/water resistance (ceiling >10 wt%),Literature Reference Benchmark
+LIT-010,Palm Kernel Ash,Metal Matrix Composite,None,30.0,tensile_strength,ASTM D638,14.13,MPa,5.00,14.13,5.16,PKA ash filler in metal matrix upper-bound behavior reference,Literature Reference Benchmark
+LIT-011,Cassava Starch,Ultrasonicated Matrix,Glycerin,0.0,wvtr,ASTM E96,,g/m2/day,,,Ultrasonication reduces WVTR via tighter packing (absolute values sparse),Literature Reference Benchmark
+LIT-012,PLA,Organo-Nanoclay,None,4.0,heat_deflection_temp,ASTM D648,93.00,degC,76.00,93.00,,Organo-modified montmorillonite nanoclay increased PLA HDT from 76C to 93C,Literature Reference Benchmark
+LIT-013,Cassava Starch,None,Glycerin,0.0,marine_degradability,ASTM D6691,100.00,days,60.00,100.00,,Pure starch lost ~2%/day; fully decomposed within 100 days,Literature Reference Benchmark
+LIT-014,Cassava Starch,PHBV Blend,Glycerin,50.0,marine_degradability,ASTM D6691,19.00,days,10.00,19.00,,Starch half-life 19 days vs PHBV half-life 158 days in marine conditions,Literature Reference Benchmark
