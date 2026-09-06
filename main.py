@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Auto-generate baseline model if not present
+# Auto-generate baseline ML model if missing
 MODEL_DIR = "models"
 MODEL_PATH = os.path.join(MODEL_DIR, "bioplastic_rf_v1.pkl")
 
@@ -37,21 +37,21 @@ def ensure_model_exists():
 
 ensure_model_exists()
 
-# Initialize Global Session State Variables
+# Global Session State Setup
 if "user_plan" not in st.session_state:
     st.session_state["user_plan"] = "free"
 
 if "daily_predictions" not in st.session_state:
     st.session_state["daily_predictions"] = 0
 
-# App Router Navigation Setup
+# App Router Navigation
 p1 = st.Page("views/1_dashboard.py", title="Predictive Modeler", icon="🔮", default=True)
 p2 = st.Page("views/2_optimizer.py", title="Inverse Recipe Optimizer", icon="🎯")
 p3 = st.Page("views/3_surfaces.py", title="Interactive 3D Surfaces", icon="📊")
 p4 = st.Page("views/4_upgrade.py", title="Upgrade Plan", icon="💳")
 
 pg = st.navigation({
-    "Core Features": [p1, p2, p3],
+    "Core Platform": [p1, p2, p3],
     "Billing & Account": [p4]
 })
 
